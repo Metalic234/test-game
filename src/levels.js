@@ -139,7 +139,7 @@ const CONFIGS = [
   },
 ];
 
-// The four who wait at the end of the last street. Story only — never playable.
+// The four bosses waiting at the end of the last street in the final encounter.
 const CITY_TEENS = [
   { x: 2032, color: '#6fa8ff', style: 'boy', scale: 1 },
   { x: 2094, color: '#ff5a6a', style: 'girl', scale: 1 },

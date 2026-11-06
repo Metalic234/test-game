@@ -103,6 +103,7 @@ export class Game {
     this.fadeTarget = 0;
     this.frozen = true;
     this.finale = null;
+    this.bossBattle = null;
     this.ending = null;
     this.powers = new Set();
     this.memory = 0;
@@ -174,6 +175,7 @@ export class Game {
     this.nearby = null;
     this.nearPower = null;
     this.finale = null;
+    this.bossBattle = null;
     this.dashT = 0;
     this.dashCd = 0;
     const beat = BEATS[index];
@@ -194,6 +196,7 @@ export class Game {
     this.mode = 'play';
     this.ending = null;
     this.finale = null;
+    this.bossBattle = null;
     this.note = null;
     this.paused = false;
     this.fade = 1;
@@ -292,6 +295,13 @@ export class Game {
     this.updatePlayer(dt);
     if (this.finale) {
       this.updateFinale(dt);
+      this.emitAmbient(dt);
+      this.updateParticles(dt);
+      return;
+    }
+    if (this.bossBattle) {
+      this.updateBossBattle(dt);
+      this.updateCamera(dt);
       this.emitAmbient(dt);
       this.updateParticles(dt);
       return;
@@ -850,26 +860,232 @@ export class Game {
 
     if (!f.ended && f.t > 11) {
       f.ended = true;
-      this.showFinaleEnding();
+      this.beginBossBattle(f.sitX);
     }
   }
 
-  showFinaleEnding() {
+  beginBossBattle(playerX) {
+    this.finale = null;
+    this.frozen = false;
+    this.blocker = null;
+    const p = this.player;
+    p.x = playerX;
+    p.y = groundAt(this.level, p.x);
+    p.vx = 0;
+    p.vy = 0;
+    p.facing = 1;
+    p.onGround = true;
+    p.anim = 0;
+
+    // The two guardians take position just ahead of her, facing the four.
+    const guardianXs = [playerX + 28, playerX + 52];
+    this.guardians.forEach((gd, i) => {
+      gd.x = guardianXs[i];
+      gd.y = groundAt(this.level, gd.x) - 22;
+      gd.lean = 0;
+      gd.hesitate = 0;
+    });
+
+    const hp = [14, 16, 16, 20];
+    this.bossBattle = {
+      t: 0,
+      playerX,
+      guardianXs,
+      bosses: (this.level.teens || []).map((teen, i) => ({
+        ...teen,
+        id: i,
+        hp: hp[i] || 7,
+        maxHp: hp[i] || 7,
+        flash: 0,
+        alive: true,
+      })),
+      shards: [],
+      shardCooldown: 0,
+      shardTarget: 0,
+      laserActive: false,
+      laserDamageT: 0,
+      defeated: 0,
+      ending: false,
+    };
+    this.audio.play('power');
+  }
+
+  updateBossBattle(dt) {
+    const battle = this.bossBattle;
+    if (!battle || battle.ending) return;
+    battle.t += dt;
+
+    // Keep the player close to the guardians while still allowing small dodges.
+    const p = this.player;
+    p.x = clamp(p.x, battle.playerX - 48, battle.playerX + 8);
+
+    // The guardians hold a protective line instead of following her as usual.
+    for (let i = 0; i < this.guardians.length; i++) {
+      const gd = this.guardians[i];
+      const targetX = battle.guardianXs[i];
+      gd.x = damp(gd.x, targetX, 7, dt);
+      gd.y = damp(gd.y, groundAt(this.level, gd.x) - 22, 5, dt);
+      gd.lean = damp(gd.lean, battle.laserActive ? 7 : 0, 5, dt);
+    }
+
+    battle.shardCooldown = Math.max(0, battle.shardCooldown - dt);
+    if (this.input.consume('shard') && battle.shardCooldown <= 0) {
+      this.throwWhiteShards();
+      battle.shardCooldown = 0.24;
+    }
+
+    const laserNow = this.input.down('laser');
+    if (laserNow && !battle.laserActive) {
+      battle.laserDamageT = 0;
+      this.audio.play('power');
+    }
+    battle.laserActive = laserNow;
+    if (laserNow) {
+      battle.laserDamageT += dt;
+      // Sustained beam damage is applied in small, even pulses while C is held.
+      while (battle.laserDamageT >= 0.22) {
+        battle.laserDamageT -= 0.22;
+        this.damageWithGuardianLaser();
+      }
+    } else {
+      battle.laserDamageT = 0;
+    }
+
+    // Move the shards toward their chosen targets and resolve impacts.
+    const survivors = [];
+    for (const shard of battle.shards) {
+      shard.life += dt;
+      shard.x += shard.vx * dt;
+      shard.y += shard.vy * dt;
+      const target = battle.bosses[shard.targetId];
+      if (!target || !target.alive || shard.life > 1.8) continue;
+      const tx = target.x - 2;
+      const ty = groundAt(this.level, target.x) - 23;
+      if (Math.hypot(tx - shard.x, ty - shard.y) < 11) {
+        this.damageBoss(target, 1, shard.x, shard.y);
+        continue;
+      }
+      survivors.push(shard);
+    }
+    battle.shards = survivors;
+    for (const boss of battle.bosses) boss.flash = Math.max(0, boss.flash - dt * 3.8);
+
+    if (battle.defeated >= battle.bosses.length) this.showBossVictory();
+  }
+
+  throwWhiteShards() {
+    const battle = this.bossBattle;
+    const p = this.player;
+    const living = battle.bosses.filter((boss) => boss.alive);
+    if (!living.length) return;
+
+    // Three small shards leave together, each choosing the next living target.
+    for (let i = 0; i < 3; i++) {
+      const target = living[battle.shardTarget % living.length];
+      battle.shardTarget++;
+      const sx = p.x + 8;
+      const sy = p.y - 20 + (i - 1) * 3;
+      const tx = target.x - 2;
+      const ty = groundAt(this.level, target.x) - 23;
+      const dx = tx - sx;
+      const dy = ty - sy;
+      const len = Math.max(1, Math.hypot(dx, dy));
+      const fan = (i - 1) * 0.045;
+      const a = Math.atan2(dy, dx) + fan;
+      const speed = 260;
+      battle.shards.push({
+        x: sx,
+        y: sy,
+        vx: Math.cos(a) * speed,
+        vy: Math.sin(a) * speed,
+        targetId: target.id,
+        life: 0,
+        spin: (i - 1) * 0.55,
+      });
+    }
+    this.audio.play('blast');
+    for (let i = 0; i < 7; i++) {
+      this.spawn({
+        type: 'spark', x: p.x + 8, y: p.y - 20,
+        vx: 18 + Math.random() * 28, vy: (Math.random() - 0.5) * 34,
+        size: 1, color: i % 2 ? '#ffffff' : '#cfeaff',
+        max: 0.28 + Math.random() * 0.22, drag: 0.92,
+      });
+    }
+  }
+
+  damageWithGuardianLaser() {
+    const battle = this.bossBattle;
+    if (!battle) return;
+    const startX = Math.min(...battle.guardianXs) + 8;
+    const beamY = groundAt(this.level, battle.playerX + 60) - 40;
+    for (const boss of battle.bosses) {
+      if (!boss.alive || boss.x < startX) continue;
+      const bossY = groundAt(this.level, boss.x) - 22;
+      if (Math.abs(bossY - beamY) <= 25) {
+        this.damageBoss(boss, 1, boss.x - 5, bossY);
+      }
+    }
+  }
+
+  damageBoss(boss, amount, hitX, hitY) {
+    const battle = this.bossBattle;
+    if (!boss.alive) return;
+    boss.hp = Math.max(0, boss.hp - amount);
+    boss.flash = 1;
+    for (let i = 0; i < 9; i++) {
+      const a = Math.random() * TAU;
+      const speed = 18 + Math.random() * 58;
+      this.spawn({
+        type: 'spark', x: hitX, y: hitY,
+        vx: Math.cos(a) * speed, vy: Math.sin(a) * speed,
+        size: 1 + (i % 4 === 0 ? 1 : 0),
+        color: i % 3 ? '#ffffff' : boss.color,
+        max: 0.35 + Math.random() * 0.45, grav: 24, drag: 0.94,
+      });
+    }
+    if (boss.hp <= 0) {
+      boss.alive = false;
+      battle.defeated++;
+      this.audio.play('whisper');
+      for (let i = 0; i < 28; i++) {
+        const a = Math.random() * TAU;
+        const speed = 22 + Math.random() * 76;
+        this.spawn({
+          type: 'spark',
+          x: boss.x,
+          y: groundAt(this.level, boss.x) - 22,
+          vx: Math.cos(a) * speed,
+          vy: Math.sin(a) * speed - 12,
+          size: 1 + (i % 5 === 0 ? 1 : 0),
+          color: i % 2 ? boss.color : '#ffffff',
+          max: 0.7 + Math.random() * 0.6,
+          grav: 22,
+          drag: 0.95,
+        });
+      }
+    }
+  }
+
+  showBossVictory() {
+    const battle = this.bossBattle;
+    if (!battle || battle.ending) return;
+    battle.ending = true;
     this.mode = 'ending';
     this.ending = {
-      name: 'THE FOUR',
+      name: 'THE LAST LIGHT',
       continued: true,
       lines: [
-        'THEY MADE THE NIGHT AS BRIGHT AS DAY, AND STILL IT DID NOT REACH HER.',
-        'GHOST SHIELDS HELD THE STREET LIKE A WALL OF COLD WATER.',
-        'SHE SAT IN THE ROAD AND WATCHED, AND DID NOT LOOK AWAY.',
-        'WHAT HAPPENS NEXT HAS NOT BEEN WRITTEN YET.',
+        'THE WHITE SHARDS FOUND THEIR MARK.',
+        'THE TWO GUARDIANS HELD THE LIGHT TOGETHER.',
+        'ONE BY ONE, THE FOUR SHADOWS LOST THEIR SHAPE.',
+        'THE CITY WAS QUIET AGAIN. FOR NOW.',
       ],
       count: this.found.size,
       powers: this.powers.size,
       t: 0,
     };
-    this.finale = null;
+    this.bossBattle = null;
     this.fade = 1;
     this.fadeTarget = 0;
     this.audio.play('ending');
@@ -1186,6 +1402,10 @@ export class Game {
       this.drawFinale(g);
       return;
     }
+    if (this.bossBattle) {
+      this.drawBossBattle(g);
+      return;
+    }
     // the four, standing at the end of the last street, before she reaches them
     if (this.level.teens) {
       for (const teen of this.level.teens) {
@@ -1302,6 +1522,123 @@ export class Game {
       disc(g, bx, by, 3, '#ffffff');
       disc(g, bx, by, 2, b.color);
     }
+  }
+
+  drawBossBattle(g) {
+    const battle = this.bossBattle;
+    const L = this.level;
+
+    // Draw the broad beam first so the bosses remain readable in front of it.
+    if (battle.laserActive) this.drawGuardianLaser(g);
+
+    for (const boss of battle.bosses) {
+      if (!boss.alive) continue;
+      const sx = boss.x - this.cam.x;
+      if (sx < -80 || sx > W + 80) continue;
+      drawTeen(g, sx, groundAt(L, boss.x), this.time, {
+        color: boss.color,
+        style: boss.style,
+        scale: boss.scale,
+        flare: boss.flash > 0 ? 1.65 : 0.92,
+        facing: -1,
+      });
+      if (boss.flash > 0) {
+        g.save();
+        g.globalAlpha = boss.flash * 0.22;
+        g.fillStyle = '#ffffff';
+        g.fillRect(Math.round(sx - 10), Math.round(groundAt(L, boss.x) - 44), 20, 42);
+        g.restore();
+      }
+    }
+
+    // The two guardians brace side-by-side and channel the same broad beam.
+    for (let i = 1; i >= 0; i--) {
+      const gd = this.guardians[i];
+      const sx = gd.x - this.cam.x;
+      drawGuardian(g, sx, gd.y, this.time, gd.phase, {
+        scale: i === 0 ? 1.04 : 0.98,
+        alpha: 0.99,
+        eye: '#f4f8ff',
+        lean: battle.laserActive ? 8 : 0,
+        eyeGlow: battle.laserActive ? 0.78 : 0.34,
+      });
+    }
+
+    this.drawPlayer(g);
+
+    // Bright, angular shards thrown by the girl.
+    for (const shard of battle.shards) {
+      const sx = shard.x - this.cam.x;
+      const sy = shard.y;
+      if (sx < -20 || sx > W + 20) continue;
+      g.save();
+      g.translate(Math.round(sx), Math.round(sy));
+      g.rotate(Math.atan2(shard.vy, shard.vx) + shard.spin);
+      g.globalCompositeOperation = 'lighter';
+      glow(g, 0, 0, 12, '#dff3ff', 0.6);
+      g.fillStyle = '#ffffff';
+      g.beginPath();
+      g.moveTo(6, 0);
+      g.lineTo(0, -3);
+      g.lineTo(-5, 0);
+      g.lineTo(0, 3);
+      g.closePath();
+      g.fill();
+      g.fillStyle = '#bdeaff';
+      g.fillRect(-3, -1, 5, 2);
+      g.restore();
+    }
+
+    if (L.foreground) {
+      const x = Math.round(this.cam.x);
+      g.drawImage(L.foreground, x, 0, Math.min(W, L.width - x), H, 0, 0, Math.min(W, L.width - x), H);
+    }
+  }
+
+  drawGuardianLaser(g) {
+    const battle = this.bossBattle;
+    const L = this.level;
+    const sx = Math.min(...battle.guardianXs) - this.cam.x + 10;
+    const endWorld = Math.max(...battle.bosses.map((b) => b.x)) + 28;
+    const ex = Math.min(W + 20, endWorld - this.cam.x);
+    const beamY = groundAt(L, battle.playerX + 60) - 40;
+    const width = Math.max(0, ex - sx);
+    if (width <= 0) return;
+    const pulse = 0.9 + Math.sin(this.time * 26) * 0.08;
+
+    g.save();
+    g.globalCompositeOperation = 'lighter';
+    // Wide atmospheric bloom, broad white body, then a sharp central core.
+    g.globalAlpha = 0.42 * pulse;
+    g.fillStyle = '#c9e8ff';
+    g.fillRect(sx, beamY - 26, width, 52);
+    glow(g, sx + width * 0.55, beamY, Math.min(150, width * 0.62), '#d9f0ff', 0.55);
+    g.globalAlpha = 0.72;
+    g.fillStyle = '#eaf7ff';
+    g.fillRect(sx, beamY - 16, width, 32);
+    g.globalAlpha = 0.94;
+    g.fillStyle = '#ffffff';
+    g.fillRect(sx, beamY - 7, width, 14);
+    g.globalAlpha = 0.8;
+    g.fillStyle = '#ffffff';
+    g.fillRect(sx, beamY - 2, width, 4);
+    // Two bright mouths make it clear that both knights are powering it.
+    for (const gx of battle.guardianXs) {
+      const x = gx - this.cam.x + 10;
+      glow(g, x, beamY, 27, '#ffffff', 0.92);
+      g.fillStyle = '#ffffff';
+      g.fillRect(Math.round(x - 2), Math.round(beamY - 13), 7, 26);
+    }
+    // A few moving pinpoints give the beam a sense of forward force.
+    for (let i = 0; i < 12; i++) {
+      const k = (this.time * 2.8 + i / 12) % 1;
+      const x = sx + k * width;
+      const y = beamY + Math.sin(this.time * 17 + i * 2.1) * 9;
+      g.globalAlpha = 0.55 + (i % 3) * 0.12;
+      g.fillStyle = '#ffffff';
+      g.fillRect(Math.round(x), Math.round(y), 2, 2);
+    }
+    g.restore();
   }
 
   drawPlayer(g) {
@@ -1466,6 +1803,8 @@ export class Game {
       g.restore();
     }
 
+    if (this.bossBattle) this.drawBossBattleUI(g);
+
     if (this.hintT < 9 && this.levelIndex === 0) {
       const a = clamp(this.hintT < 7 ? 1 : 9 - this.hintT, 0, 1) * 0.85;
       g.save();
@@ -1488,6 +1827,42 @@ export class Game {
     }
 
     if (this.card) this.drawCard(g);
+  }
+
+  drawBossBattleUI(g) {
+    const battle = this.bossBattle;
+    if (!battle) return;
+    g.save();
+    g.fillStyle = 'rgba(3,4,10,0.62)';
+    g.fillRect(54, 4, W - 108, 37);
+    drawText(g, 'THE FOUR', W / 2, 7, {
+      align: 'center', color: '#e9edf6', scale: 1, spacing: 2, shadow: '#000000',
+    });
+    const cellW = 78;
+    const gap = 10;
+    const total = cellW * 4 + gap * 3;
+    const left = (W - total) / 2;
+    for (let i = 0; i < battle.bosses.length; i++) {
+      const boss = battle.bosses[i];
+      const x = left + i * (cellW + gap);
+      drawText(g, `${i + 1}`, x + cellW / 2, 19, {
+        align: 'center', color: boss.alive ? boss.color : '#656170', scale: 1,
+      });
+      g.fillStyle = 'rgba(150,150,170,0.22)';
+      g.fillRect(x + 5, 30, cellW - 10, 4);
+      if (boss.alive && boss.hp > 0) {
+        g.fillStyle = boss.color;
+        g.fillRect(x + 5, 30, Math.max(0, (cellW - 10) * boss.hp / boss.maxHp), 4);
+      }
+    }
+    const laserText = battle.laserActive ? 'GUARDIANS: BEAM ACTIVE' : 'HOLD C  GUARDIAN LASER';
+    drawText(g, 'X  WHITE SHARDS', W / 2, H - 25, {
+      align: 'center', color: '#f2f0f7', scale: 1, spacing: 1, shadow: '#000000',
+    });
+    drawText(g, laserText, W / 2, H - 13, {
+      align: 'center', color: battle.laserActive ? '#ffffff' : '#b8c7da', scale: 1, spacing: 1, shadow: '#000000',
+    });
+    g.restore();
   }
 
   drawCard(g) {

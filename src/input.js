@@ -19,6 +19,8 @@ const MAP = {
   ShiftLeft: 'dash',
   ShiftRight: 'dash',
   KeyJ: 'dash',
+  KeyX: 'shard',
+  KeyC: 'laser',
 };
 
 const BLOCK = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space']);
