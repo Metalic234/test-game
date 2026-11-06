@@ -616,9 +616,11 @@ export class Game {
   updateCamera(dt) {
     const p = this.player;
     const look = p.facing * 34;
-    const target = p.x - W * 0.44 + look;
+    const target = this.bossBattle
+      ? p.x - W * 0.24 + 28
+      : p.x - W * 0.44 + look;
     const maxX = Math.max(0, this.level.width - W);
-    this.cam.x = clamp(damp(this.cam.x, target, 2.4, dt), 0, maxX);
+    this.cam.x = clamp(damp(this.cam.x, target, this.bossBattle ? 3.2 : 2.4, dt), 0, maxX);
   }
 
   // ---------------------------------------------------------------- memories
@@ -877,36 +879,50 @@ export class Game {
     p.onGround = true;
     p.anim = 0;
 
-    // The two guardians take position just ahead of her, facing the four.
-    const guardianXs = [playerX + 28, playerX + 52];
+    // The guardians retreat behind her and form a protective line.
+    // They move there over the first second instead of teleporting.
+    const guardianTargets = [playerX - 34, playerX - 62];
     this.guardians.forEach((gd, i) => {
-      gd.x = guardianXs[i];
-      gd.y = groundAt(this.level, gd.x) - 22;
       gd.lean = 0;
       gd.hesitate = 0;
+      gd.hover = i === 0 ? 22 : 28;
     });
 
-    const hp = [14, 16, 16, 20];
+    const hp = [14, 0, 0, 48];
     this.bossBattle = {
       t: 0,
       playerX,
-      guardianXs,
+      guardianTargets,
+      guardianXs: this.guardians.map((gd) => gd.x),
       bosses: (this.level.teens || []).map((teen, i) => ({
         ...teen,
         id: i,
-        hp: hp[i] || 7,
-        maxHp: hp[i] || 7,
+        kind: ['blue', 'red', 'yellow', 'brown'][i],
+        hp: hp[i],
+        maxHp: hp[i],
         flash: 0,
-        alive: true,
+        alive: i === 0 || i === 3,
+        fleeing: i === 1 || i === 2,
+        escaped: false,
+        fleeSpeed: i === 1 ? 164 : 190,
+        lungeT: 0,
+        attackCooldown: 1.0 + i * 0.35,
+        stompClock: i === 3 ? 1.4 : 0,
+        stompT: 0,
       })),
       shards: [],
       shardCooldown: 0,
-      shardTarget: 0,
       laserActive: false,
       laserDamageT: 0,
       defeated: 0,
+      totalDefeats: 2,
+      // The knights take the heavy one together while the girl duels Blue.
+      brownEngaged: true,
+      escapeBannerT: 4.2,
       ending: false,
     };
+    // Frame the girl, the approaching blue duelist, and the distant heavy.
+    this.cam.x = clamp(playerX - W * 0.24 + 28, 0, Math.max(0, this.level.width - W));
     this.audio.play('power');
   }
 
@@ -914,18 +930,81 @@ export class Game {
     const battle = this.bossBattle;
     if (!battle || battle.ending) return;
     battle.t += dt;
+    battle.escapeBannerT = Math.max(0, battle.escapeBannerT - dt);
 
-    // Keep the player close to the guardians while still allowing small dodges.
     const p = this.player;
-    p.x = clamp(p.x, battle.playerX - 48, battle.playerX + 8);
+    // Keep the encounter in a compact arena, but let her dodge in both directions.
+    p.x = clamp(p.x, battle.playerX - 42, battle.playerX + 54);
+    p.facing = 1;
+    p.y = groundAt(this.level, p.x);
+    p.onGround = true;
 
-    // The guardians hold a protective line instead of following her as usual.
+    // Red and yellow choose to run rather than fight. They are no longer targets.
+    for (const boss of battle.bosses) {
+      if (!boss.fleeing || boss.escaped) continue;
+      boss.x += boss.fleeSpeed * dt;
+      boss.y = groundAt(this.level, boss.x);
+      if (boss.x > this.cam.x + W + 28) boss.escaped = true;
+    }
+
+    // The two knights fall back to positions behind the girl, then hold the line.
     for (let i = 0; i < this.guardians.length; i++) {
       const gd = this.guardians[i];
-      const targetX = battle.guardianXs[i];
-      gd.x = damp(gd.x, targetX, 7, dt);
-      gd.y = damp(gd.y, groundAt(this.level, gd.x) - 22, 5, dt);
-      gd.lean = damp(gd.lean, battle.laserActive ? 7 : 0, 5, dt);
+      const targetX = p.x - (i === 0 ? 34 : 62);
+      gd.x = damp(gd.x, targetX, 3.0, dt);
+      gd.y = damp(gd.y, groundAt(this.level, gd.x) - (i === 0 ? 22 : 28), 4.5, dt);
+      gd.lean = damp(gd.lean, battle.laserActive ? 9 : (battle.brownEngaged ? 5 : 0), 4, dt);
+      battle.guardianTargets[i] = targetX;
+    }
+    battle.guardianXs = this.guardians.map((gd) => gd.x);
+    battle.guardiansReady = this.guardians.every((gd, i) => Math.abs(gd.x - battle.guardianTargets[i]) < 9);
+
+    const blue = battle.bosses.find((boss) => boss.kind === 'blue');
+    const brown = battle.bosses.find((boss) => boss.kind === 'brown');
+
+    // Blue closes in and lunges at the girl: this is her one-on-one duel.
+    if (blue && blue.alive) {
+      blue.attackCooldown -= dt;
+      if (blue.attackCooldown <= 0 && blue.lungeT <= 0) {
+        blue.lungeT = 0.3;
+        blue.attackCooldown = 1.65;
+      }
+      if (blue.lungeT > 0) blue.lungeT = Math.max(0, blue.lungeT - dt);
+      const blueOffset = blue.lungeT > 0 ? 13 : 34;
+      const blueTarget = clamp(p.x + blueOffset, p.x + 12, p.x + 48);
+      blue.x = damp(blue.x, blueTarget, blue.lungeT > 0 ? 9 : 3.8, dt);
+      blue.y = groundAt(this.level, blue.x);
+    }
+
+    // Brown is a true juggernaut. He only advances after Blue falls, slowly
+    // enough for the girl and both guardians to turn their attention together.
+    if (brown && brown.alive && battle.brownEngaged) {
+      const targetX = p.x + 118;
+      const step = 25 * dt;
+      brown.x += clamp(targetX - brown.x, -step, step);
+      brown.y = groundAt(this.level, brown.x);
+      brown.stompClock -= dt;
+      brown.stompT = Math.max(0, (brown.stompT || 0) - dt);
+      if (brown.stompClock <= 0) {
+        brown.stompClock = 3.1;
+        brown.stompT = 0.65;
+        this.audio.play('blast');
+        for (let i = 0; i < 16; i++) {
+          const side = i % 2 ? 1 : -1;
+          this.spawn({
+            type: 'spark',
+            x: brown.x + side * (8 + Math.random() * 12),
+            y: groundAt(this.level, brown.x) - 2,
+            vx: side * (24 + Math.random() * 52),
+            vy: -8 - Math.random() * 22,
+            size: i % 3 ? 1 : 2,
+            color: i % 2 ? '#c89a68' : '#ffffff',
+            max: 0.35 + Math.random() * 0.3,
+            grav: 46,
+            drag: 0.94,
+          });
+        }
+      }
     }
 
     battle.shardCooldown = Math.max(0, battle.shardCooldown - dt);
@@ -942,7 +1021,7 @@ export class Game {
     battle.laserActive = laserNow;
     if (laserNow) {
       battle.laserDamageT += dt;
-      // Sustained beam damage is applied in small, even pulses while C is held.
+      // The guardians' combined beam is reserved for the heavy brown boss.
       while (battle.laserDamageT >= 0.22) {
         battle.laserDamageT -= 0.22;
         this.damageWithGuardianLaser();
@@ -951,17 +1030,23 @@ export class Game {
       battle.laserDamageT = 0;
     }
 
-    // Move the shards toward their chosen targets and resolve impacts.
+    // Shards steer toward their chosen opponent, even while Blue is moving.
     const survivors = [];
     for (const shard of battle.shards) {
       shard.life += dt;
-      shard.x += shard.vx * dt;
-      shard.y += shard.vy * dt;
       const target = battle.bosses[shard.targetId];
-      if (!target || !target.alive || shard.life > 1.8) continue;
+      if (!target || !target.alive || shard.life > 2.0) continue;
       const tx = target.x - 2;
       const ty = groundAt(this.level, target.x) - 23;
-      if (Math.hypot(tx - shard.x, ty - shard.y) < 11) {
+      const dx = tx - shard.x;
+      const dy = ty - shard.y;
+      const len = Math.max(1, Math.hypot(dx, dy));
+      const speed = 270;
+      shard.vx = lerp(shard.vx, (dx / len) * speed, Math.min(1, dt * 4.5));
+      shard.vy = lerp(shard.vy, (dy / len) * speed, Math.min(1, dt * 4.5));
+      shard.x += shard.vx * dt;
+      shard.y += shard.vy * dt;
+      if (Math.hypot(dx, dy) < 12) {
         this.damageBoss(target, 1, shard.x, shard.y);
         continue;
       }
@@ -970,19 +1055,20 @@ export class Game {
     battle.shards = survivors;
     for (const boss of battle.bosses) boss.flash = Math.max(0, boss.flash - dt * 3.8);
 
-    if (battle.defeated >= battle.bosses.length) this.showBossVictory();
+    if (battle.defeated >= battle.totalDefeats) this.showBossVictory();
   }
 
   throwWhiteShards() {
     const battle = this.bossBattle;
     const p = this.player;
-    const living = battle.bosses.filter((boss) => boss.alive);
-    if (!living.length) return;
+    if (!battle) return;
+    // Girl duels Blue first. Once he falls, her shards join the knights against Brown.
+    const target = battle.bosses.find((boss) => boss.kind === 'blue' && boss.alive)
+      || battle.bosses.find((boss) => boss.kind === 'brown' && boss.alive);
+    if (!target) return;
 
-    // Three small shards leave together, each choosing the next living target.
+    // Three shards fly as one focused volley at the current opponent.
     for (let i = 0; i < 3; i++) {
-      const target = living[battle.shardTarget % living.length];
-      battle.shardTarget++;
       const sx = p.x + 8;
       const sy = p.y - 20 + (i - 1) * 3;
       const tx = target.x - 2;
@@ -990,9 +1076,9 @@ export class Game {
       const dx = tx - sx;
       const dy = ty - sy;
       const len = Math.max(1, Math.hypot(dx, dy));
-      const fan = (i - 1) * 0.045;
+      const fan = (i - 1) * 0.055;
       const a = Math.atan2(dy, dx) + fan;
-      const speed = 260;
+      const speed = 270;
       battle.shards.push({
         x: sx,
         y: sy,
@@ -1016,21 +1102,19 @@ export class Game {
 
   damageWithGuardianLaser() {
     const battle = this.bossBattle;
-    if (!battle) return;
-    const startX = Math.min(...battle.guardianXs) + 8;
-    const beamY = groundAt(this.level, battle.playerX + 60) - 40;
-    for (const boss of battle.bosses) {
-      if (!boss.alive || boss.x < startX) continue;
-      const bossY = groundAt(this.level, boss.x) - 22;
-      if (Math.abs(bossY - beamY) <= 25) {
-        this.damageBoss(boss, 1, boss.x - 5, bossY);
-      }
+    if (!battle || !battle.brownEngaged || !battle.guardiansReady) return;
+    const brown = battle.bosses.find((boss) => boss.kind === 'brown' && boss.alive);
+    if (!brown) return;
+    const beamY = groundAt(this.level, this.player.x) - 40;
+    const bossY = groundAt(this.level, brown.x) - 22;
+    if (Math.abs(bossY - beamY) <= 36) {
+      this.damageBoss(brown, 1, brown.x - 8, bossY);
     }
   }
 
   damageBoss(boss, amount, hitX, hitY) {
     const battle = this.bossBattle;
-    if (!boss.alive) return;
+    if (!boss.alive || boss.fleeing) return;
     boss.hp = Math.max(0, boss.hp - amount);
     boss.flash = 1;
     for (let i = 0; i < 9; i++) {
@@ -1064,6 +1148,12 @@ export class Game {
           drag: 0.95,
         });
       }
+      if (boss.kind === 'blue') {
+        // The heavy one now advances; the girl and both guardians face him together.
+        const brown = battle.bosses.find((entry) => entry.kind === 'brown');
+        if (brown) brown.stompClock = 0.85;
+        this.player.facing = 1;
+      }
     }
   }
 
@@ -1076,10 +1166,10 @@ export class Game {
       name: 'THE LAST LIGHT',
       continued: true,
       lines: [
-        'THE WHITE SHARDS FOUND THEIR MARK.',
-        'THE TWO GUARDIANS HELD THE LIGHT TOGETHER.',
-        'ONE BY ONE, THE FOUR SHADOWS LOST THEIR SHAPE.',
-        'THE CITY WAS QUIET AGAIN. FOR NOW.',
+        'RED AND YELLOW RAN INTO THE DARK.',
+        'BLUE CHALLENGED THE GIRL AT THE FRONT.',
+        'THE TWO GUARDIANS HELD THE LINE BEHIND HER.',
+        'THE THREE OF THEM BROKE THE HEAVY ONE.',
       ],
       count: this.found.size,
       powers: this.powers.size,
@@ -1528,30 +1618,82 @@ export class Game {
     const battle = this.bossBattle;
     const L = this.level;
 
-    // Draw the broad beam first so the bosses remain readable in front of it.
+    // The knights' beam reaches past the girl toward the heavy brown boss.
     if (battle.laserActive) this.drawGuardianLaser(g);
 
+    // Red and yellow are visibly fleeing; they are not combat targets anymore.
     for (const boss of battle.bosses) {
-      if (!boss.alive) continue;
+      if (!boss.fleeing || boss.escaped) continue;
       const sx = boss.x - this.cam.x;
       if (sx < -80 || sx > W + 80) continue;
       drawTeen(g, sx, groundAt(L, boss.x), this.time, {
         color: boss.color,
         style: boss.style,
         scale: boss.scale,
-        flare: boss.flash > 0 ? 1.65 : 0.92,
+        flare: 0.8,
+        facing: 1,
+      });
+      // Short streaks make their retreat unmistakable.
+      g.save();
+      g.globalCompositeOperation = 'lighter';
+      g.globalAlpha = 0.38;
+      g.fillStyle = boss.color;
+      g.fillRect(Math.round(sx - 15), Math.round(groundAt(L, boss.x) - 20), 9, 1);
+      g.fillRect(Math.round(sx - 11), Math.round(groundAt(L, boss.x) - 25), 6, 1);
+      g.restore();
+    }
+
+    // Active opponents: Blue duels the girl; Brown waits as the slow juggernaut.
+    for (const boss of battle.bosses) {
+      if (!boss.alive || boss.fleeing) continue;
+      const sx = boss.x - this.cam.x;
+      if (sx < -80 || sx > W + 80) continue;
+      const isBlue = boss.kind === 'blue';
+      drawTeen(g, sx, groundAt(L, boss.x), this.time, {
+        color: boss.color,
+        style: boss.style,
+        scale: boss.scale,
+        flare: boss.flash > 0 ? 1.65 : (isBlue && boss.lungeT > 0 ? 1.35 : 0.92),
         facing: -1,
       });
       if (boss.flash > 0) {
         g.save();
         g.globalAlpha = boss.flash * 0.22;
         g.fillStyle = '#ffffff';
-        g.fillRect(Math.round(sx - 10), Math.round(groundAt(L, boss.x) - 44), 20, 42);
+        g.fillRect(Math.round(sx - 10), Math.round(groundAt(L, boss.x) - 48), 20, 46);
+        g.restore();
+      }
+      if (isBlue && boss.lungeT > 0.12) {
+        const girlX = this.player.x - this.cam.x;
+        const slashY = groundAt(L, boss.x) - 21;
+        g.save();
+        g.globalCompositeOperation = 'lighter';
+        g.globalAlpha = 0.75;
+        glow(g, (sx + girlX) * 0.5, slashY, 22, '#6fa8ff', 0.65);
+        g.strokeStyle = '#b9d7ff';
+        g.lineWidth = 2;
+        g.beginPath();
+        g.moveTo(sx - 6, slashY + 5);
+        g.lineTo(girlX + 5, slashY - 5);
+        g.stroke();
+        g.restore();
+      }
+      if (boss.kind === 'brown' && boss.stompT > 0) {
+        const pulse = 1 - boss.stompT / 0.65;
+        const radius = 16 + pulse * 34;
+        g.save();
+        g.globalCompositeOperation = 'lighter';
+        g.globalAlpha = (1 - pulse) * 0.7;
+        g.strokeStyle = '#d6b28a';
+        g.lineWidth = 2;
+        g.beginPath();
+        g.ellipse(sx, groundAt(L, boss.x) - 2, radius, 4 + pulse * 3, 0, 0, TAU);
+        g.stroke();
         g.restore();
       }
     }
 
-    // The two guardians brace side-by-side and channel the same broad beam.
+    // The knights are behind her, one close and one farther back.
     for (let i = 1; i >= 0; i--) {
       const gd = this.guardians[i];
       const sx = gd.x - this.cam.x;
@@ -1559,8 +1701,8 @@ export class Game {
         scale: i === 0 ? 1.04 : 0.98,
         alpha: 0.99,
         eye: '#f4f8ff',
-        lean: battle.laserActive ? 8 : 0,
-        eyeGlow: battle.laserActive ? 0.78 : 0.34,
+        lean: battle.laserActive ? 9 : (battle.brownEngaged ? 5 : 0),
+        eyeGlow: battle.laserActive ? 0.84 : 0.34,
       });
     }
 
@@ -1598,10 +1740,11 @@ export class Game {
   drawGuardianLaser(g) {
     const battle = this.bossBattle;
     const L = this.level;
-    const sx = Math.min(...battle.guardianXs) - this.cam.x + 10;
-    const endWorld = Math.max(...battle.bosses.map((b) => b.x)) + 28;
+    const sx = Math.min(...battle.guardianXs) - this.cam.x + 8;
+    const brown = battle.bosses.find((boss) => boss.kind === 'brown');
+    const endWorld = brown ? brown.x + 34 : battle.playerX + 180;
     const ex = Math.min(W + 20, endWorld - this.cam.x);
-    const beamY = groundAt(L, battle.playerX + 60) - 40;
+    const beamY = groundAt(L, this.player.x) - 40;
     const width = Math.max(0, ex - sx);
     if (width <= 0) return;
     const pulse = 0.9 + Math.sin(this.time * 26) * 0.08;
@@ -1833,29 +1976,41 @@ export class Game {
     const battle = this.bossBattle;
     if (!battle) return;
     g.save();
-    g.fillStyle = 'rgba(3,4,10,0.62)';
-    g.fillRect(54, 4, W - 108, 37);
-    drawText(g, 'THE FOUR', W / 2, 7, {
+    g.fillStyle = 'rgba(3,4,10,0.68)';
+    g.fillRect(48, 4, W - 96, 39);
+    const blueBoss = battle.bosses.find((boss) => boss.kind === 'blue');
+    const heading = blueBoss && blueBoss.alive ? 'BLUE DUEL  /  BROWN HEAVY' : 'THE HEAVY ONE';
+    drawText(g, heading, W / 2, 7, {
       align: 'center', color: '#e9edf6', scale: 1, spacing: 2, shadow: '#000000',
     });
-    const cellW = 78;
-    const gap = 10;
-    const total = cellW * 4 + gap * 3;
-    const left = (W - total) / 2;
-    for (let i = 0; i < battle.bosses.length; i++) {
-      const boss = battle.bosses[i];
-      const x = left + i * (cellW + gap);
-      drawText(g, `${i + 1}`, x + cellW / 2, 19, {
-        align: 'center', color: boss.alive ? boss.color : '#656170', scale: 1,
+
+    const entries = [
+      { kind: 'blue', label: 'BLUE  /  DUEL', x: 88, w: 128 },
+      { kind: 'brown', label: 'BROWN  /  HEAVY', x: 264, w: 128 },
+    ];
+    for (const entry of entries) {
+      const boss = battle.bosses.find((item) => item.kind === entry.kind);
+      const color = boss ? boss.color : '#ffffff';
+      drawText(g, entry.label, entry.x + entry.w / 2, 19, {
+        align: 'center', color: boss && boss.alive ? color : '#777582', scale: 1, spacing: 1,
       });
-      g.fillStyle = 'rgba(150,150,170,0.22)';
-      g.fillRect(x + 5, 30, cellW - 10, 4);
-      if (boss.alive && boss.hp > 0) {
-        g.fillStyle = boss.color;
-        g.fillRect(x + 5, 30, Math.max(0, (cellW - 10) * boss.hp / boss.maxHp), 4);
+      g.fillStyle = 'rgba(150,150,170,0.24)';
+      g.fillRect(entry.x, 31, entry.w, 4);
+      if (boss && boss.alive && boss.maxHp > 0) {
+        g.fillStyle = color;
+        g.fillRect(entry.x, 31, Math.max(0, entry.w * boss.hp / boss.maxHp), 4);
       }
     }
-    const laserText = battle.laserActive ? 'GUARDIANS: BEAM ACTIVE' : 'HOLD C  GUARDIAN LASER';
+
+    if (battle.escapeBannerT > 0) {
+      const a = Math.min(1, battle.escapeBannerT * 1.5);
+      drawText(g, 'RED + YELLOW FLED', W / 2, 54, {
+        align: 'center', color: `rgba(225,220,235,${a})`, scale: 1, spacing: 1, shadow: '#000000',
+      });
+    }
+    const laserText = battle.laserActive
+      ? (battle.brownEngaged ? 'GUARDIANS: HEAVY BEAM' : 'GUARDIANS: CHARGING')
+      : 'HOLD C  KNIGHTS\' WIDE LASER';
     drawText(g, 'X  WHITE SHARDS', W / 2, H - 25, {
       align: 'center', color: '#f2f0f7', scale: 1, spacing: 1, shadow: '#000000',
     });
