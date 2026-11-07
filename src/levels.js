@@ -140,6 +140,25 @@ const CONFIGS = [
     ],
     memories: [],
   },
+  {
+    id: 'port',
+    numeral: 'VI',
+    name: 'THE LAST PORT',
+    theme: 'port',
+    width: 2700,
+    seed: 8842,
+    spawnX: 40,
+    exitX: 2602,
+    ship: true,
+    amp: 0.8,
+    points: [
+      [0, 250], [240, 251], [480, 249], [720, 250], [960, 249],
+      [1200, 250], [1440, 249], [1660, 250], [1840, 249], [1960, 250],
+      [2060, 245], [2140, 236], [2220, 222], [2290, 210],
+      [2340, 208], [2700, 208],
+    ],
+    memories: [],
+  },
 ];
 
 // The four bosses waiting at the end of the last street in the final encounter.
@@ -854,12 +873,249 @@ function paintShrine(level, g, rng) {
   level.lights.push({ x: p.x, y: gy - 24, r: 30, color: p.color, alpha: 0.2, flicker: 0.5 });
 }
 
+// ---------- the port ------------------------------------------------------
+
+const PORT_DOCK_END = 1960;   // the pier ends and the water begins
+const PORT_DECK_START = 2290; // the gangplank meets the ship here
+
+function paintPort(level, g, rng) {
+  const { width, ground } = level;
+  const deckY = (x) => R(groundAt(level, x));
+
+  // harbour water under everything, with a few cold glints on it
+  for (let x = 0; x < width; x++) {
+    const gy = R(ground[x]);
+    const top = Math.max(gy + 6, 232);
+    for (let y = top; y < H; y++) {
+      const t = (y - top) / Math.max(1, H - top);
+      g.fillStyle = mix('#12212c', '#04080c', clamp(t * 1.5, 0, 1));
+      g.fillRect(x, y, 1, 1);
+    }
+    for (let i = 0; i < 3; i++) {
+      const y = top + 2 + ((x * 7 + i * 23) % 24);
+      if (y < H) {
+        g.fillStyle = `rgba(150,190,215,${0.04 + rng() * 0.08})`;
+        g.fillRect(x, R(y), 1, 1);
+      }
+    }
+  }
+
+  // the pier: planks along its length, a lit edge, posts dropping into the water
+  for (let x = 0; x < PORT_DOCK_END; x++) {
+    const gy = R(ground[x]);
+    rect(g, x, gy, 1, 2, '#5a4630');
+    rect(g, x, gy + 2, 1, 2, '#33281b');
+    rect(g, x, gy + 4, 1, 5, '#1b1610');
+    if (x % 13 === 0) {
+      g.fillStyle = 'rgba(10,8,6,0.55)';
+      g.fillRect(x, gy, 1, 4);
+    }
+    if (x % 96 === 0) {
+      rect(g, x, gy + 4, 4, 30, '#241c14');
+      rect(g, x, gy + 4, 4, 1, '#3a2e20');
+    }
+  }
+
+  // the gangplank, climbing from the pier to the deck
+  for (let x = PORT_DOCK_END; x < PORT_DECK_START; x++) {
+    const gy = R(ground[x]);
+    rect(g, x, gy, 1, 3, '#5a4630');
+    rect(g, x, gy + 3, 1, 2, '#2a2118');
+    if (x % 9 === 0) {
+      g.fillStyle = 'rgba(12,9,6,0.5)';
+      g.fillRect(x, gy, 1, 4);
+    }
+    // rope rail: posts and a slack line between them
+    g.fillStyle = '#3c2f22';
+    if (x % 46 < 2) g.fillRect(x, gy - 13, 1, 13);
+    g.fillStyle = 'rgba(126,106,78,0.55)';
+    g.fillRect(x, gy - 13 + Math.round(Math.sin(x * 0.09) * 1.4), 1, 1);
+  }
+
+  // the ship: deck planks, then the hull running down into the water
+  for (let x = PORT_DECK_START; x < width; x++) {
+    const gy = R(ground[x]);
+    rect(g, x, gy, 1, 2, '#9a7950');
+    rect(g, x, gy + 2, 1, 2, '#4a3826');
+    for (let y = gy + 4; y < H; y++) {
+      const t = (y - gy - 4) / Math.max(1, H - gy - 4);
+      g.fillStyle = mix('#31261a', '#0c0906', clamp(t * 1.3, 0, 1));
+      g.fillRect(x, y, 1, 1);
+      if ((y - gy) % 5 === 0) {
+        g.fillStyle = 'rgba(8,6,5,0.55)';
+        g.fillRect(x, y, 1, 1);
+      }
+    }
+    const wt = gy + 42;
+    if (wt < H - 1) {
+      g.fillStyle = 'rgba(96,44,40,0.55)';
+      g.fillRect(x, wt, 1, 2);
+    }
+    if ((x - PORT_DECK_START) % 34 === 0) {
+      g.fillStyle = 'rgba(148,136,116,0.22)';
+      g.fillRect(x, gy + 6, 1, 30);
+    }
+  }
+
+  // the rail along the deck, and the bow where the plank arrives
+  for (let x = PORT_DECK_START + 4; x < width; x++) {
+    const gy = deckY(x);
+    if ((x - PORT_DECK_START) % 18 < 2) rect(g, x, gy - 14, 1, 14, '#3a2e20');
+    if (x % 3 !== 0) {
+      g.fillStyle = 'rgba(98,80,56,0.85)';
+      g.fillRect(x, gy - 14, 1, 1);
+    }
+  }
+  {
+    const gy = deckY(2300);
+    rect(g, 2296, gy - 30, 3, 30, '#2c2318');
+    rect(g, 2296, gy - 30, 3, 1, '#453a26');
+    rect(g, 2299, gy - 26, 2, 22, '#3a2e20');
+  }
+  // the bow, cupped up out of the water where the plank arrives
+  {
+    const gy = deckY(2302);
+    for (let i = 0; i < 20; i++) {
+      const t = i / 19;
+      const topY = gy + 1 - Math.round(Math.sin(t * Math.PI) * 8) - 2;
+      rect(g, 2302 + i, topY, 1, gy - topY + 3, '#31261a');
+      g.fillStyle = 'rgba(158,176,200,0.3)';
+      g.fillRect(2302 + i, topY, 1, 1);
+    }
+    rect(g, 2312, gy - 14, 20, 2, '#3a2e20');
+    rect(g, 2330, gy - 17, 1, 5, '#241c14');
+    rect(g, 2329, gy - 18, 3, 2, '#2a2833');
+    rect(g, 2330, gy - 17, 1, 1, '#ffe6b4');
+  }
+  // the deckhouse at the stern, still burning
+  {
+    const gy = deckY(2660);
+    const hh = 30;
+    rect(g, 2622, gy - hh, 78, hh, '#241c15');
+    rect(g, 2622, gy - hh, 78, 2, '#3d3122');
+    rect(g, 2620, gy - hh - 3, 82, 3, '#2c2318');
+    for (const wx of [2634, 2660, 2684]) {
+      rect(g, wx, gy - hh + 7, 9, 7, '#0a0806');
+      rect(g, wx + 1, gy - hh + 8, 7, 5, 'rgba(255,200,132,0.85)');
+      level.lights.push({ x: wx + 4, y: gy - hh + 11, r: 16, color: '#ffcf8e', alpha: 0.22, flicker: 0.6 });
+    }
+  }
+
+  // the masts, their canvas, and the rigging between them
+  const mast = (x, topY, topW) => {
+    const gy = deckY(x);
+    for (let y = topY; y < gy; y++) {
+      const k = (gy - y) / Math.max(1, gy - topY);
+      const w = Math.max(1, Math.round(lerp(topW, 5, k)));
+      rect(g, x - w / 2, y, w, 1, '#1a1510');
+      g.fillStyle = 'rgba(92,80,62,0.5)';
+      g.fillRect(R(x + w / 2) - 1, y, 1, 1);
+    }
+  };
+  const sail = (x, yTop, yBot, wTop, wBot, col, edge) => {
+    g.fillStyle = col;
+    g.beginPath();
+    g.moveTo(x - wTop / 2, yTop);
+    g.lineTo(x + wTop / 2, yTop);
+    g.lineTo(x + wBot / 2, yBot);
+    g.quadraticCurveTo(x, yBot + 3, x - wBot / 2, yBot);
+    g.closePath();
+    g.fill();
+    g.strokeStyle = edge;
+    g.lineWidth = 1;
+    g.stroke();
+  };
+
+  mast(2430, 34, 2);
+  sail(2430, 46, 148, 58, 92, 'rgba(96,108,128,0.95)', 'rgba(182,202,228,0.6)');
+  sail(2430, 154, 196, 52, 78, 'rgba(82,94,114,0.95)', 'rgba(166,186,214,0.5)');
+  rect(g, 2430 - 34, 46, 68, 1, '#241d16');
+  rect(g, 2430 - 30, 154, 60, 1, '#241d16');
+  mast(2338, 92, 2);
+  g.fillStyle = 'rgba(84,96,116,0.9)';
+  g.beginPath();
+  g.moveTo(2338, 96);
+  g.lineTo(2430, 112);
+  g.lineTo(2430, 190);
+  g.closePath();
+  g.fill();
+  mast(2596, 76, 2);
+  sail(2596, 40, 80, 26, 44, 'rgba(84,96,116,0.9)', 'rgba(168,188,216,0.45)');
+  rect(g, 2596 - 26, 40, 52, 1, '#241d16');
+  sail(2596, 86, 160, 44, 64, 'rgba(88,100,120,0.94)', 'rgba(172,192,220,0.5)');
+  rect(g, 2596 - 24, 86, 48, 1, '#241d16');
+
+  g.strokeStyle = 'rgba(122,134,152,0.26)';
+  g.lineWidth = 1;
+  const rig = (x1, y1, x2, y2) => {
+    g.beginPath();
+    g.moveTo(x1, y1);
+    g.lineTo(x2, y2);
+    g.stroke();
+  };
+  rig(2430, 36, 2302, deckY(2302) - 8);
+  rig(2430, 36, width, deckY(width - 1) - 8);
+  rig(2596, 78, 2430, 46);
+  rig(2596, 78, width, 118);
+  for (let i = 0; i < 12; i++) {
+    const yy = 34 + Math.sin(i * 0.5) * 2;
+    rect(g, 2432 + i, yy, 1, 2, i < 8 ? 'rgba(180,60,60,0.7)' : 'rgba(150,50,50,0.45)');
+  }
+
+  // lamp light: portholes, the bow lantern, and the pier lamps
+  for (let x = PORT_DECK_START + 46; x < width - 16; x += 62) {
+    const gy = deckY(x);
+    const py = gy + 26;
+    if (py < H - 3) {
+      disc(g, x, py, 3, '#0c0a08');
+      disc(g, x, py, 2, 'rgba(255,196,120,0.9)');
+      level.lights.push({ x, y: py, r: 12, color: '#ffc478', alpha: 0.16, flicker: 0.5 });
+    }
+  }
+  level.lights.push({ x: 2304, y: deckY(2300) - 18, r: 26, color: '#ffd9a0', alpha: 0.22, flicker: 0.6 });
+  for (let x = 240; x < PORT_DOCK_END - 80; x += 300) {
+    const gy = deckY(x);
+    rect(g, x, gy - 36, 1, 36, '#1b1a20');
+    rect(g, x, gy - 36, 7, 1, '#1b1a20');
+    rect(g, x + 4, gy - 35, 3, 2, '#2a2833');
+    rect(g, x + 5, gy - 33, 1, 1, '#ffe6b4');
+    level.lights.push({ x: x + 5, y: gy - 31, r: 44, color: '#ffcf8e', alpha: 0.2, flicker: 0.9 });
+  }
+
+  // bollards, coiled rope, crates, and the line holding the ship in
+  for (const x of [320, 700, 1080, 1460, 1820]) {
+    const gy = deckY(x);
+    rect(g, x, gy - 6, 5, 6, '#2c2419');
+    rect(g, x, gy - 7, 5, 1, '#453a26');
+    for (let i = 0; i < 10; i++) {
+      const a = (i / 10) * Math.PI * 2;
+      g.fillStyle = 'rgba(126,106,78,0.42)';
+      g.fillRect(R(x + 2 + Math.cos(a) * 5), R(gy - 1 + Math.sin(a) * 1.6), 1, 1);
+    }
+  }
+  for (const [x, w, hh] of [[540, 14, 12], [552, 10, 8], [900, 12, 9], [1520, 16, 10]]) {
+    const gy = deckY(x);
+    rect(g, x, gy - hh, w, hh, '#2a2219');
+    rect(g, x, gy - hh, w, 1, '#3d3122');
+    for (let k = 3; k < w; k += 4) {
+      g.fillStyle = 'rgba(14,11,8,0.5)';
+      g.fillRect(x + k, gy - hh + 1, 1, hh - 1);
+    }
+  }
+  g.strokeStyle = 'rgba(130,112,84,0.32)';
+  g.beginPath();
+  g.moveTo(1822, deckY(1820) - 6);
+  g.quadraticCurveTo(2080, deckY(2040) + 8, 2298, deckY(2300) - 12);
+  g.stroke();
+}
+
 function paintTerrain(level, g, rng) {
   switch (level.theme) {
     case 'forest': paintForest(level, g, rng); break;
     case 'desert': paintDesert(level, g, rng); break;
     case 'mountain': paintMountain(level, g, rng); break;
     case 'city': paintCity(level, g, rng); break;
+    case 'port': paintPort(level, g, rng); break;
     default: paintVillage(level, g, rng); break;
   }
   if (level.power) paintShrine(level, g, rng);
@@ -1399,6 +1655,141 @@ function buildCityLayers(level) {
   return [far, mid];
 }
 
+function buildPortLayers(level) {
+  const far = layerCanvas(level, 0.08, level.seed + 101, (g, w, h, rng) => {
+    for (let y = 0; y < h; y++) {
+      const t = y / h;
+      g.fillStyle = t < 0.62
+        ? mix('#04060d', '#0d1a29', Math.pow(t / 0.62, 1.4))
+        : mix('#0d1a29', '#1d2f40', (t - 0.62) / 0.38);
+      g.fillRect(0, y, w, 1);
+    }
+    for (let i = 0; i < 130; i++) {
+      const x = rng() * w;
+      const y = rng() * 150;
+      g.fillStyle = `rgba(214,232,255,${0.14 + rng() * 0.5})`;
+      g.fillRect(R(x), R(y), 1, 1);
+    }
+    const mx = Math.min(w - 80, 96);
+    g.save();
+    g.globalCompositeOperation = 'lighter';
+    for (let r = 66; r > 10; r -= 5) disc(g, mx, 46, r, 'rgba(180,205,230,0.008)');
+    g.restore();
+    disc(g, mx, 46, 11, '#dfe7f2');
+    disc(g, mx - 3, 43, 8, '#eef4fb');
+    // harbour skyline along the horizon
+    let x = -10;
+    while (x < w + 10) {
+      const bw = randInt(rng, 16, 44);
+      const bh = rand(rng, 8, 34);
+      g.fillStyle = 'rgba(9,15,24,0.92)';
+      g.fillRect(R(x), R(202 - bh), bw, bh + 8);
+      if (rng() < 0.4) g.fillRect(R(x + bw * 0.4), R(202 - bh - 5), 2, 5);
+      for (let wy = 202 - bh + 4; wy < 198; wy += 6) {
+        for (let wx = x + 2; wx < x + bw - 3; wx += 5) {
+          if (rng() < 0.3) {
+            g.fillStyle = 'rgba(255,206,150,0.42)';
+            g.fillRect(R(wx), R(wy), 1, 1);
+          }
+        }
+      }
+      x += bw + randInt(rng, 3, 12);
+    }
+    // the open sea
+    for (let y = 206; y < h; y++) {
+      const t = (y - 206) / Math.max(1, h - 206);
+      g.fillStyle = mix('#101d29', '#060a11', clamp(t * 1.4, 0, 1));
+      g.fillRect(0, y, w, 1);
+    }
+    for (let i = 0; i < w / 3; i++) {
+      const rx = rng() * w;
+      const ry = 210 + rng() * 55;
+      g.fillStyle = `rgba(150,186,214,${0.04 + rng() * 0.1})`;
+      g.fillRect(R(rx), R(ry), randInt(rng, 1, 5), 1);
+    }
+    // the moon's long road on the water
+    for (let k = 0; k < 26; k++) {
+      const yy = 208 + k * 2.4;
+      const ww = 6 + k * 1.6;
+      g.fillStyle = `rgba(190,214,238,${0.16 * (1 - k / 26)})`;
+      g.fillRect(R(mx - ww / 2), R(yy), R(ww), 1);
+    }
+    for (let y = 190; y < h; y++) {
+      const a = clamp((y - 190) / 80, 0, 1) * 0.2;
+      g.fillStyle = `rgba(120,150,180,${a})`;
+      g.fillRect(0, y, w, 1);
+    }
+  });
+
+  const mid = layerCanvas(level, 0.3, level.seed + 107, (g, w, h, rng) => {
+    const baseY = 236;
+    for (let x = 0; x < w; x++) {
+      g.fillStyle = '#080b10';
+      g.fillRect(x, baseY, 1, h - baseY);
+    }
+    // warehouses, one after another
+    let x = -10;
+    while (x < w + 10) {
+      const bw = randInt(rng, 60, 130);
+      const bh = rand(rng, 26, 58);
+      const top = baseY - bh;
+      g.fillStyle = pick(rng, ['#12161d', '#171b23', '#0e1218']);
+      g.fillRect(R(x), R(top), bw, bh);
+      g.fillStyle = '#1c2129';
+      g.fillRect(R(x - 2), R(top - 3), bw + 4, 3);
+      for (let wy = top + 6; wy < baseY - 8; wy += 9) {
+        for (let wx = x + 5; wx < x + bw - 6; wx += 8) {
+          g.fillStyle = rng() < 0.22 ? 'rgba(255,198,138,0.5)' : 'rgba(24,30,40,0.9)';
+          g.fillRect(R(wx), R(wy), 4, 4);
+        }
+      }
+      if (rng() < 0.5) {
+        g.fillStyle = '#0a0d12';
+        g.fillRect(R(x + bw * 0.35), R(baseY - 16), 12, 16);
+      }
+      x += bw + randInt(rng, 8, 26);
+    }
+    // dock cranes leaning out over the water
+    for (let cx = 90; cx < w; cx += randInt(rng, 160, 260)) {
+      const gh = rand(rng, 60, 96);
+      const top = baseY - gh;
+      g.fillStyle = '#141922';
+      for (let y = top; y < baseY; y++) {
+        const k = (y - top) / gh;
+        const half = Math.max(1, Math.round(3 * (1 - k) + 1));
+        g.fillRect(R(cx - half), R(y), half * 2, 1);
+        if (y % 7 === 0) g.fillRect(R(cx - half - 2), R(y), half * 2 + 4, 1);
+      }
+      g.fillRect(R(cx), R(top - 3), 46, 3);
+      g.fillRect(R(cx + 42), R(top), 2, 16);
+      g.fillStyle = 'rgba(255,190,120,0.5)';
+      g.fillRect(R(cx + 42), R(top + 16), 2, 1);
+    }
+    // bare masts of boats already moored
+    for (let i = 0; i < w / 320; i++) {
+      const bx = rng() * w;
+      const mh = rand(rng, 40, 80);
+      g.fillStyle = 'rgba(10,13,18,0.9)';
+      g.fillRect(R(bx), R(baseY - mh), 1, mh);
+      for (let k = 0; k < mh * 0.55; k += 8) g.fillRect(R(bx - 3), R(baseY - mh + k), 7, 1);
+      g.fillRect(R(bx - 9), R(baseY - 3), 20, 3);
+    }
+    for (let i = 0; i < w / 2; i++) {
+      const rx = rng() * w;
+      const ry = baseY + rng() * 30;
+      g.fillStyle = `rgba(140,176,206,${0.03 + rng() * 0.07})`;
+      g.fillRect(R(rx), R(ry), randInt(rng, 1, 6), 1);
+    }
+    for (let y = baseY - 2; y < h; y++) {
+      const a = clamp((y - baseY + 2) / 40, 0, 1) * 0.45;
+      g.fillStyle = `rgba(5,8,12,${a})`;
+      g.fillRect(0, y, w, 1);
+    }
+  });
+
+  return [far, mid];
+}
+
 function paintVillageForeground(g, level, rng) {
   // dark cliff teeth framing the drop, plus ash drifts
   for (let i = 0; i < 5; i++) {
@@ -1450,6 +1841,7 @@ function buildFromConfig(cfg, index) {
     arenaX: cfg.story ? 1852 : null,
     teens: cfg.story ? CITY_TEENS.map((t) => ({ ...t })) : null,
     lookoutX: cfg.lookoutX ?? null,
+    ship: !!cfg.ship,
   };
   for (const m of level.memories) m.y = groundAt(level, m.x) - 25;
   if (level.power) level.power.y = groundAt(level, level.power.x);
@@ -1465,6 +1857,7 @@ function buildFromConfig(cfg, index) {
     case 'desert': level.layers = buildDesertLayers(level); break;
     case 'mountain': level.layers = buildMountainLayers(level); break;
     case 'city': level.layers = buildCityLayers(level); break;
+    case 'port': level.layers = buildPortLayers(level); break;
     default: level.layers = buildVillageLayers(level); break;
   }
 

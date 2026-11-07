@@ -25,6 +25,7 @@ const SKY = {
   mountain: [[0, '#050a16'], [0.4, '#101d33'], [0.75, '#1b2c46'], [1, '#2b4059']],
   village: [[0, '#05040a'], [0.35, '#140c14'], [0.65, '#2a1116'], [1, '#4a1a14']],
   city: [[0, '#03040a'], [0.4, '#0a0f1c'], [0.72, '#161d2e'], [1, '#2c2c3e']],
+  port: [[0, '#03060c'], [0.42, '#0a1521'], [0.74, '#152534'], [1, '#28394a']],
 };
 
 const MIST = {
@@ -33,6 +34,7 @@ const MIST = {
   mountain: { color: '#cfe2f4', alpha: 0.075, y: 120, h: 130 },
   village: { color: '#a06a58', alpha: 0.05, y: 140, h: 120 },
   city: { color: '#8fa6c8', alpha: 0.045, y: 150, h: 110 },
+  port: { color: '#a8c4dc', alpha: 0.055, y: 132, h: 120 },
 };
 
 // The three powers she can buy from the stones, and the colour of each.
@@ -49,6 +51,7 @@ const BEATS = [
   { x: 1600, line: 'THE COLD REMEMBERS HER BETTER THAN SHE DOES.' },
   { x: 880, line: 'THEY DO NOT WANT HER TO SEE THE VALLEY YET.' },
   { x: 900, line: 'THE CITY DOES NOT SLEEP. IT WAITS.' },
+  { x: 2340, line: 'THE DECK IS STILL WARM FROM THE ENGINE.' },
 ];
 
 function makeVignette() {
@@ -335,6 +338,7 @@ export class Game {
     }
     if (this.player.x >= this.level.exitX) {
       if (this.levelIndex < LEVEL_COUNT - 1) this.beginTransition();
+      else if (this.level.ship) this.showShipEnding();
       else this.beginFinale();
     }
   }
@@ -940,10 +944,6 @@ export class Game {
         stompT: 0,
       })),
       hero: { hp: 100, max: 100, hurt: 0 },
-      knights: [
-        { hp: 100, max: 100, hurt: 0 },
-        { hp: 100, max: 100, hurt: 0 },
-      ],
       heroDown: false,
       shards: [],
       shardCooldown: 0,
@@ -966,6 +966,12 @@ export class Game {
     if (!battle || battle.ending) return;
     battle.t += dt;
     battle.escapeBannerT = Math.max(0, battle.escapeBannerT - dt);
+
+    // He is already finished. This is the two of them seeing it through.
+    if (battle.finish) {
+      this.updateBrownFinish(dt);
+      return;
+    }
 
     const p = this.player;
     // Keep the encounter in a compact arena, but let her dodge in both directions.
@@ -1043,11 +1049,6 @@ export class Game {
         brown.stompClock = 3.1;
         brown.stompT = 0.65;
         this.audio.play('blast');
-        for (const k of battle.knights) {
-          if (k.hp <= 0) continue;
-          k.hp = Math.max(0, k.hp - 8);
-          k.hurt = 1;
-        }
         for (let i = 0; i < 16; i++) {
           const side = i % 2 ? 1 : -1;
           this.spawn({
@@ -1067,7 +1068,6 @@ export class Game {
     }
 
     battle.hero.hurt = Math.max(0, battle.hero.hurt - dt * 2.2);
-    for (const k of battle.knights) k.hurt = Math.max(0, k.hurt - dt * 2.2);
 
     battle.shardCooldown = Math.max(0, battle.shardCooldown - dt);
     if (this.input.consume('shard') && battle.shardCooldown <= 0) {
@@ -1122,7 +1122,7 @@ export class Game {
       this.showHeroDown();
       return;
     }
-    if (battle.defeated >= battle.totalDefeats) this.showBossVictory();
+    if (battle.defeated >= battle.totalDefeats && !battle.finish) this.showPortArrival();
   }
 
   throwWhiteShards() {
@@ -1221,32 +1221,196 @@ export class Game {
         if (brown) brown.stompClock = 0.85;
         this.player.facing = 1;
       }
+      if (boss.kind === 'brown') this.beginBrownFinish(boss);
     }
   }
 
-  showBossVictory() {
+  // He goes down, and the two of them take it from her. A short story, not a fight.
+  beginBrownFinish(brown) {
     const battle = this.bossBattle;
-    if (!battle || battle.ending) return;
-    battle.ending = true;
+    if (!battle || battle.finish) return;
+    battle.finish = { t: 0, brown, stared: false, fired: false, gone: false, fade: 0 };
+    battle.brownEngaged = false;
+    battle.laserActive = false;
+    battle.shards.length = 0;
+    this.player.facing = 1;
+  }
+
+  updateBrownFinish(dt) {
+    const battle = this.bossBattle;
+    const f = battle.finish;
+    const L = this.level;
+    const p = this.player;
+    const brown = f.brown;
+    f.t += dt;
+
+    // She holds her ground. This one is not hers.
+    p.vx = 0;
+    p.facing = 1;
+    p.y = groundAt(L, p.x);
+    p.onGround = true;
+
+    // One of them either side of him, both turned inward on the same spot.
+    const flank = [brown.x - 30, brown.x + 30];
+    for (let i = 0; i < this.guardians.length; i++) {
+      const gd = this.guardians[i];
+      gd.x = damp(gd.x, flank[i], i === 0 ? 2.6 : 2.2, dt);
+      gd.y = damp(gd.y, groundAt(L, gd.x) - 22, 3.4, dt);
+      gd.lean = damp(gd.lean, f.fired ? 9 : 6, 3, dt);
+    }
+
+    // Frame the three of them, with the dying one in the middle of them.
+    this.cam.x = damp(
+      this.cam.x,
+      clamp((p.x + brown.x) * 0.5 - W * 0.5, 0, Math.max(0, L.width - W)),
+      2.2, dt,
+    );
+
+    if (!f.stared && f.t > 1.0) {
+      f.stared = true;
+      this.audio.play('whisper');
+    }
+    if (!f.fired && f.t > 1.9) {
+      f.fired = true;
+      this.audio.play('power');
+    }
+
+    if (f.fired) {
+      const burn = f.t - 1.9;
+      f.fade = clamp(burn / 2.4, 0, 1);
+      if (Math.random() < dt * 42) {
+        this.spawn({
+          type: 'spark',
+          x: brown.x + (Math.random() - 0.5) * 18,
+          y: groundAt(L, brown.x) - 8 - Math.random() * 30,
+          vx: (Math.random() - 0.5) * 40,
+          vy: -10 - Math.random() * 30,
+          size: 1,
+          color: Math.random() < 0.5 ? '#ffffff' : brown.color,
+          max: 0.3 + Math.random() * 0.4,
+          grav: 30,
+          drag: 0.94,
+        });
+      }
+      if (!f.gone && burn > 2.4) {
+        // the last of him, going out
+        f.gone = true;
+        this.audio.play('blast');
+        const bx = brown.x;
+        const by = groundAt(L, bx) - 22;
+        for (let i = 0; i < 46; i++) {
+          const a = Math.random() * TAU;
+          const sp = 24 + Math.random() * 92;
+          this.spawn({
+            type: 'spark',
+            x: bx,
+            y: by,
+            vx: Math.cos(a) * sp,
+            vy: Math.sin(a) * sp - 10,
+            size: 1 + (i % 6 === 0 ? 1 : 0),
+            color: i % 2 ? brown.color : '#ffffff',
+            max: 0.7 + Math.random() * 0.7,
+            grav: 26,
+            drag: 0.95,
+          });
+        }
+      }
+    }
+
+    if (f.t > 5.0) this.showPortArrival();
+  }
+
+  drawBrownFinish(g) {
+    const L = this.level;
+    const f = this.bossBattle.finish;
+    const brown = f.brown;
+    const bx = brown.x - this.cam.x;
+    const baseY = groundAt(L, brown.x);
+    const targetY = baseY - 24;
+    const flicker = 0.5 + Math.sin(this.time * 30) * 0.5;
+
+    // Both beams, from both of them, into the space between.
+    if (f.fired && !f.gone) {
+      const spread = 4 + f.fade * 3;
+      const reach = 12 + f.fade * 16;
+      g.save();
+      g.globalCompositeOperation = 'lighter';
+      for (let i = 0; i < 2; i++) {
+        const gd = this.guardians[i];
+        const kx = gd.x - this.cam.x;
+        const ky = gd.y - 20;
+        g.fillStyle = 'rgba(150,200,240,0.16)';
+        g.beginPath();
+        g.moveTo(kx, ky - spread * 2);
+        g.lineTo(bx, targetY - reach * 2);
+        g.lineTo(bx, targetY + reach * 2);
+        g.lineTo(kx, ky + spread * 2);
+        g.closePath();
+        g.fill();
+        g.fillStyle = 'rgba(246,252,255,0.7)';
+        g.beginPath();
+        g.moveTo(kx, ky - spread);
+        g.lineTo(bx, targetY - reach);
+        g.lineTo(bx, targetY + reach);
+        g.lineTo(kx, ky + spread);
+        g.closePath();
+        g.fill();
+        glow(g, kx, ky, 16, '#dff1ff', 0.5);
+      }
+      glow(g, bx, targetY, 30 + f.fade * 22, '#ffffff', 0.32 * (1 - f.fade * 0.4));
+      g.restore();
+    }
+
+    // He is still standing while the light eats him from the middle out.
+    if (!f.gone && bx > -80 && bx < W + 80) {
+      g.save();
+      g.globalAlpha = clamp(1 - f.fade * (0.6 + flicker * 0.3), 0.06, 1);
+      drawTeen(g, bx, baseY, this.time, {
+        color: brown.color,
+        style: brown.style,
+        scale: brown.scale,
+        flare: 0.5 + f.fade * 0.9,
+        facing: -1,
+      });
+      g.restore();
+      if (f.fade > 0.05) {
+        g.save();
+        g.globalCompositeOperation = 'lighter';
+        glow(g, bx, targetY, 22 + f.fade * 30, '#ffffff', 0.25 * f.fade);
+        g.restore();
+      }
+    }
+  }
+
+  // The street is done with them. The road goes down to the water.
+  showPortArrival() {
+    if (!this.bossBattle) return;
+    this.bossBattle = null;
+    this.mode = 'play';
+    this.player.facing = 1;
+    this.beginTransition();
+  }
+
+  // The deck under her feet and the water under that. The ship takes her the rest of the way.
+  showShipEnding() {
+    if (this.mode === 'ending') return;
     this.mode = 'ending';
     this.ending = {
-      name: 'THE LAST LIGHT',
-      continued: true,
+      name: 'A SHIP OUT',
+      continued: false,
       lines: [
-        'RED AND YELLOW RAN INTO THE DARK.',
-        'BLUE CHALLENGED THE GIRL AT THE FRONT.',
-        'THE TWO GUARDIANS HELD THE LINE BEHIND HER.',
-        'THE THREE OF THEM BROKE THE HEAVY ONE.',
+        'THE GANGPLANK HOLDS HER WEIGHT ALL THE WAY UP.',
+        'THE PORT CLOSES ITS LAMPS BEHIND HER, ONE BY ONE.',
+        'THE TWO SHADOWS COME UP AFTER HER AND STAND AT THE RAIL.',
+        'THE SHIP TURNS ITS FACE TO THE BLACK WATER, AND LEAVES.',
       ],
       count: this.found.size,
       powers: this.powers.size,
       t: 0,
     };
-    this.bossBattle = null;
     this.fade = 1;
     this.fadeTarget = 0;
     this.audio.play('ending');
-    this.audio.applyBiome('city');
   }
 
   showHeroDown() {
@@ -1454,6 +1618,7 @@ export class Game {
       mountain: ['#dceaf8', '#b6cbe0', '#ffffff'],
       village: ['#5a4a44', '#6d5b52', '#8a786c'],
       city: ['#3a3f52', '#4a5166', '#5c6478'],
+      port: ['#3a4450', '#4c5966', '#26303a'],
     }[theme] || ['#ffffff'];
     for (let i = 0; i < n; i++) {
       this.spawn({
@@ -1591,6 +1756,36 @@ export class Game {
           max: 2 + rnd() * 2,
           size: 1,
           sway: 2,
+        });
+      }
+    } else if (theme === 'port') {
+      // cold spray blowing off the water, and the lamp light caught in it
+      if (rnd() < dt * 5) {
+        this.spawn({
+          type: 'mote',
+          x: camX + rnd() * W,
+          y: 150 + rnd() * 100,
+          vx: -8 - rnd() * 16,
+          vy: -2 - rnd() * 5,
+          color: rnd() < 0.7 ? '#a8c4dc' : '#ffd9a0',
+          max: 5 + rnd() * 4,
+          alpha: 0.3,
+          size: 1,
+          sway: 2,
+        });
+      }
+      if (rnd() < dt * 2) {
+        this.spawn({
+          type: 'firefly',
+          x: camX + rnd() * W,
+          y: 190 + rnd() * 50,
+          vx: 2,
+          vy: -3,
+          color: '#ffe6b4',
+          max: 2.6,
+          alpha: 0.5,
+          size: 1,
+          sway: 1,
         });
       }
     } else {
@@ -1881,6 +2076,9 @@ export class Game {
     // The knights' beam reaches past the girl toward the heavy brown boss.
     if (battle.laserActive) this.drawGuardianLaser(g);
 
+    // And then, once he is down, the two of them finish it together.
+    if (battle.finish) this.drawBrownFinish(g);
+
     // Red and yellow are visibly fleeing; they are not combat targets anymore.
     for (const boss of battle.bosses) {
       if (!boss.fleeing || boss.escaped) continue;
@@ -1953,20 +2151,18 @@ export class Game {
       }
     }
 
-    // The knights are behind her, one close and one farther back.
+    // The two of them behind her — and, at the very end, either side of him.
+    const beamOn = battle.finish ? (battle.finish.fired && !battle.finish.gone) : battle.laserActive;
     for (let i = 1; i >= 0; i--) {
       const gd = this.guardians[i];
       const sx = gd.x - this.cam.x;
-      const knight = battle.knights[i] || { hp: 100, max: 100, hurt: 0 };
-      const fallen = knight.hp <= 0;
       drawGuardian(g, sx, gd.y, this.time, gd.phase, {
         scale: i === 0 ? 1.04 : 0.98,
-        alpha: fallen ? 0.42 : 0.99,
+        alpha: 0.99,
         eye: '#f4f8ff',
-        lean: battle.laserActive ? 9 : (battle.brownEngaged ? 5 : 0),
-        eyeGlow: fallen ? 0.08 : (battle.laserActive ? 0.84 : 0.34),
+        lean: beamOn ? 9 : (battle.brownEngaged ? 5 : 0),
+        eyeGlow: beamOn ? 0.9 : 0.34,
       });
-      this.drawHpBar(g, sx - 14, gd.y - 58, 28, knight.hp / knight.max, '#cfe2ff', knight.hurt);
     }
 
     this.drawPlayer(g);
@@ -2129,7 +2325,7 @@ export class Game {
     // faint aura around the girl so she always reads
     const p = this.player;
     const tone = {
-      forest: '#9fe4dc', desert: '#ffe8c8', mountain: '#cfe4ff', village: '#ff9a5a', city: '#9fc8ff',
+      forest: '#9fe4dc', desert: '#ffe8c8', mountain: '#cfe4ff', village: '#ff9a5a', city: '#9fc8ff', port: '#ffd9a0',
     }[this.level.theme];
     glow(g, p.x - cam.x, p.y - 10, 46, tone, 0.075);
     g.restore();
@@ -2235,24 +2431,6 @@ export class Game {
     if (this.card) this.drawCard(g);
   }
 
-  drawHpBar(g, x, y, w, frac, color, hurt = 0) {
-    const k = clamp(frac, 0, 1);
-    const bx = Math.round(x);
-    const by = Math.round(y);
-    g.save();
-    g.fillStyle = 'rgba(4,5,10,0.78)';
-    g.fillRect(bx - 1, by - 1, w + 2, 5);
-    g.fillStyle = rgba(color, 0.92);
-    g.fillRect(bx, by, Math.round(w * k), 3);
-    g.fillStyle = 'rgba(232,242,255,0.3)';
-    g.fillRect(bx, by, w, 1);
-    if (hurt > 0.02) {
-      g.fillStyle = `rgba(255,255,255,${0.55 * hurt})`;
-      g.fillRect(bx, by, w, 3);
-    }
-    g.restore();
-  }
-
   drawBossBattleUI(g) {
     const battle = this.bossBattle;
     if (!battle) return;
@@ -2283,7 +2461,7 @@ export class Game {
       }
     }
 
-    // her bar, and the two that are keeping the heavy one off her back
+    // her bar
     const hero = battle.hero;
     const heroFrac = clamp(hero.hp / hero.max, 0, 1);
     const heroCol = heroFrac > 0.55 ? '#8fd0ff' : heroFrac > 0.28 ? '#ffd166' : '#ff6a6a';
@@ -2298,33 +2476,33 @@ export class Game {
       g.fillStyle = `rgba(255,255,255,${0.5 * hero.hurt})`;
       g.fillRect(12, H - 36, 76, 3);
     }
-    for (let i = 0; i < battle.knights.length; i++) {
-      const k = battle.knights[i];
-      const kx = 96 + i * 42;
-      drawText(g, i === 0 ? 'K1' : 'K2', kx, H - 47, { color: '#9fb4cc', scale: 1 });
-      g.fillStyle = 'rgba(4,5,10,0.78)';
-      g.fillRect(kx - 1, H - 38, 36, 7);
-      g.fillStyle = rgba('#cfe2ff', 0.9);
-      g.fillRect(kx, H - 36, Math.max(0, Math.round(34 * clamp(k.hp / k.max, 0, 1))), 3);
-      g.fillStyle = 'rgba(232,242,255,0.26)';
-      g.fillRect(kx, H - 36, 34, 1);
-    }
-
     if (battle.escapeBannerT > 0) {
       const a = Math.min(1, battle.escapeBannerT * 1.5);
       drawText(g, 'RED + YELLOW FLED', W / 2, 54, {
         align: 'center', color: `rgba(225,220,235,${a})`, scale: 1, spacing: 1, shadow: '#000000',
       });
     }
-    const laserText = battle.laserActive
-      ? (battle.brownEngaged ? 'GUARDIANS: HEAVY BEAM' : 'GUARDIANS: CHARGING')
-      : 'HOLD C  KNIGHTS\' WIDE LASER';
-    drawText(g, 'X  WHITE SHARDS', W / 2, H - 25, {
-      align: 'center', color: '#f2f0f7', scale: 1, spacing: 1, shadow: '#000000',
-    });
-    drawText(g, laserText, W / 2, H - 13, {
-      align: 'center', color: battle.laserActive ? '#ffffff' : '#b8c7da', scale: 1, spacing: 1, shadow: '#000000',
-    });
+    if (battle.finish) {
+      const f = battle.finish;
+      const line = f.gone
+        ? 'HE IS GONE. NOTHING LEFT OF HIM BUT THE LIGHT.'
+        : f.fired
+          ? 'BOTH OF THEM, AT ONCE, INTO THE SAME POINT.'
+          : 'ONE OF THEM EITHER SIDE. THEY LOOK AT HIM.';
+      drawText(g, line, W / 2, H - 18, {
+        align: 'center', color: f.fired ? '#ffffff' : '#c8d4e6', scale: 1, spacing: 1, shadow: '#000000',
+      });
+    } else {
+      const laserText = battle.laserActive
+        ? (battle.brownEngaged ? 'GUARDIANS: HEAVY BEAM' : 'GUARDIANS: CHARGING')
+        : 'HOLD C  KNIGHTS\' WIDE LASER';
+      drawText(g, 'X  WHITE SHARDS', W / 2, H - 25, {
+        align: 'center', color: '#f2f0f7', scale: 1, spacing: 1, shadow: '#000000',
+      });
+      drawText(g, laserText, W / 2, H - 13, {
+        align: 'center', color: battle.laserActive ? '#ffffff' : '#b8c7da', scale: 1, spacing: 1, shadow: '#000000',
+      });
+    }
     g.restore();
   }
 

@@ -81,6 +81,26 @@ const BIOMES = {
     bright: 820,
     music: 0.85,
   },
+  // Cold water, ropes, and a ship waiting at the end of the road.
+  port: {
+    root: 38,
+    chords: [
+      [38, 45, 50],
+      [41, 48, 53],
+      [36, 43, 48],
+      [43, 50, 57],
+    ],
+    scale: [0, 3, 5, 7, 10],
+    chordDur: 14,
+    padGain: 0.085,
+    bellGain: 0.055,
+    bellEvery: [4.2, 8.4],
+    wind: 0.045,
+    windFreq: 620,
+    windQ: 0.9,
+    bright: 760,
+    music: 0.8,
+  },
   // Heavy metal, and only ever heard while she looks down at the city.
   metal: {
     root: 40,
