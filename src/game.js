@@ -337,7 +337,9 @@ export class Game {
       return;
     }
     if (this.player.x >= this.level.exitX) {
-      if (this.levelIndex < LEVEL_COUNT - 1) this.beginTransition();
+      // The last street does not lead anywhere: it leads to them.
+      if (this.level.finale) this.beginFinale();
+      else if (this.levelIndex < LEVEL_COUNT - 1) this.beginTransition();
       else if (this.level.ship) this.showShipEnding();
       else this.beginFinale();
     }

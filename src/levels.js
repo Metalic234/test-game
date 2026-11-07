@@ -107,6 +107,8 @@ const CONFIGS = [
     numeral: 'IV',
     name: 'THE LOST CIVILIZATION',
     theme: 'village',
+    // The street ends here: past it is the last city, and them.
+    finale: true,
     width: 1240,
     seed: 6621,
     spawnX: 40,
@@ -1839,6 +1841,7 @@ function buildFromConfig(cfg, index) {
     memories: cfg.memories.map((m) => ({ ...m })),
     power: cfg.power ? { ...cfg.power } : null,
     arenaX: cfg.story ? 1852 : null,
+    finale: !!cfg.finale,
     teens: cfg.story ? CITY_TEENS.map((t) => ({ ...t })) : null,
     lookoutX: cfg.lookoutX ?? null,
     ship: !!cfg.ship,
