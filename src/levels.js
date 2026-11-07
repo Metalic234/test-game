@@ -85,6 +85,7 @@ const CONFIGS = [
     seed: 4407,
     spawnX: 42,
     exitX: 2700,
+    lookoutX: 2080,
     amp: 4.2,
     points: [
       [0, 244], [300, 237], [600, 226], [900, 210], [1180, 193],
@@ -126,6 +127,8 @@ const CONFIGS = [
     numeral: 'V',
     name: 'THE LAST CITY',
     theme: 'city',
+    // Never walked any more: it is looked at from the mountain, and fought in at the end.
+    story: true,
     width: 2340,
     seed: 5150,
     spawnX: 30,
@@ -148,7 +151,8 @@ const CITY_TEENS = [
 ];
 
 export const TOTAL_MEMORIES = CONFIGS.reduce((n, c) => n + c.memories.length, 0);
-export const LEVEL_COUNT = CONFIGS.length;
+const PLAY = CONFIGS.filter((c) => !c.story);
+export const LEVEL_COUNT = PLAY.length;
 
 function buildGround(width, points, amp, seed) {
   const noise = makeNoise1(seed);
@@ -1417,7 +1421,15 @@ function paintVillageForeground(g, level, rng) {
 // ---------- assembly -------------------------------------------------------
 
 export function buildLevel(index) {
-  const cfg = CONFIGS[clamp(index, 0, CONFIGS.length - 1)];
+  return buildFromConfig(PLAY[clamp(index, 0, PLAY.length - 1)], index);
+}
+
+// The city, built only as a place to look at and to end in.
+export function buildCityScene() {
+  return buildFromConfig(CONFIGS.find((c) => c.story), PLAY.length);
+}
+
+function buildFromConfig(cfg, index) {
   const rng = mulberry32(cfg.seed);
   const level = {
     index,
@@ -1435,8 +1447,9 @@ export function buildLevel(index) {
     valleyFires: [],
     memories: cfg.memories.map((m) => ({ ...m })),
     power: cfg.power ? { ...cfg.power } : null,
-    arenaX: cfg.theme === 'city' ? 1852 : null,
-    teens: cfg.theme === 'city' ? CITY_TEENS.map((t) => ({ ...t })) : null,
+    arenaX: cfg.story ? 1852 : null,
+    teens: cfg.story ? CITY_TEENS.map((t) => ({ ...t })) : null,
+    lookoutX: cfg.lookoutX ?? null,
   };
   for (const m of level.memories) m.y = groundAt(level, m.x) - 25;
   if (level.power) level.power.y = groundAt(level, level.power.x);

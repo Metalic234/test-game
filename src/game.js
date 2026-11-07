@@ -5,7 +5,7 @@ import {
 } from './util.js';
 import { drawText, wrapText, textWidth } from './font.js';
 import { GIRL, GIRL_SIT, drawGuardian, drawWisp, drawTeen, drawShield } from './sprites.js';
-import { buildLevel, groundAt, TOTAL_MEMORIES, LEVEL_COUNT } from './levels.js';
+import { buildLevel, buildCityScene, groundAt, TOTAL_MEMORIES, LEVEL_COUNT } from './levels.js';
 import { AudioEngine } from './audio.js';
 import { Input } from './input.js';
 
@@ -115,6 +115,9 @@ export class Game {
     this.beats = [];
     this.blocker = null;
     this.mutedNotice = 0;
+    this.cityScene = null;
+    this.lookout = null;
+    this.lookedOut = false;
     this.bob = 0;
 
     this.cam = { x: 0, y: 0 };
@@ -181,6 +184,8 @@ export class Game {
     const beat = BEATS[index];
     this.beats = beat ? [{ ...beat, hold: 0, wait: 0, done: false }] : [];
     this.blocker = null;
+    this.lookout = null;
+    this.lookedOut = false;
     this.audio.applyBiome(this.level.theme);
     this.showCard(this.level);
   }
@@ -292,7 +297,16 @@ export class Game {
       return;
     }
 
+    if (this.lookout) {
+      this.updateLookout(dt);
+      this.updateParticles(dt);
+      return;
+    }
     this.updatePlayer(dt);
+    if (this.level.lookoutX && !this.lookedOut && this.player.x >= this.level.lookoutX) {
+      this.beginLookout();
+      return;
+    }
     if (this.finale) {
       this.updateFinale(dt);
       this.emitAmbient(dt);
@@ -756,6 +770,21 @@ export class Game {
     this.nearPower = null;
     this.card = null;
     this.audio.play('transition');
+    // The city is no longer walked: the last street is a scene she arrives in.
+    if (!this.cityScene) this.cityScene = buildCityScene();
+    this.level = this.cityScene;
+    const L = this.level;
+    const p = this.player;
+    p.x = L.arenaX - 74;
+    p.y = groundAt(L, p.x);
+    p.vx = 0;
+    p.vy = 0;
+    p.facing = 1;
+    p.onGround = true;
+    p.anim = 0;
+    this.cam.x = clamp(p.x - W * 0.32, 0, Math.max(0, L.width - W));
+    this.guardians = this.makeGuardians(p.x);
+    this.particles.length = 0;
     this.finale = {
       t: 0,
       sitX: this.level.arenaX + 34,
@@ -910,6 +939,12 @@ export class Game {
         stompClock: i === 3 ? 1.4 : 0,
         stompT: 0,
       })),
+      hero: { hp: 100, max: 100, hurt: 0 },
+      knights: [
+        { hp: 100, max: 100, hurt: 0 },
+        { hp: 100, max: 100, hurt: 0 },
+      ],
+      heroDown: false,
       shards: [],
       shardCooldown: 0,
       laserActive: false,
@@ -968,8 +1003,27 @@ export class Game {
       if (blue.attackCooldown <= 0 && blue.lungeT <= 0) {
         blue.lungeT = 0.3;
         blue.attackCooldown = 1.65;
+        blue.pendingHit = true;
       }
-      if (blue.lungeT > 0) blue.lungeT = Math.max(0, blue.lungeT - dt);
+      if (blue.lungeT > 0) {
+        blue.lungeT = Math.max(0, blue.lungeT - dt);
+        if (blue.pendingHit && blue.lungeT <= 0.14) {
+          blue.pendingHit = false;
+          if (Math.abs(blue.x - p.x) < 26 && battle.hero.hp > 0) {
+            battle.hero.hp = Math.max(0, battle.hero.hp - 9);
+            battle.hero.hurt = 1;
+            this.audio.play('whisper');
+            for (let i = 0; i < 10; i++) {
+              this.spawn({
+                type: 'spark', x: p.x, y: p.y - 12,
+                vx: (Math.random() - 0.5) * 70, vy: -Math.random() * 60,
+                size: 1, color: i % 2 ? '#ffffff' : '#9fc8ff',
+                max: 0.4, grav: 80, drag: 0.95,
+              });
+            }
+          }
+        }
+      }
       const blueOffset = blue.lungeT > 0 ? 13 : 34;
       const blueTarget = clamp(p.x + blueOffset, p.x + 12, p.x + 48);
       blue.x = damp(blue.x, blueTarget, blue.lungeT > 0 ? 9 : 3.8, dt);
@@ -989,6 +1043,11 @@ export class Game {
         brown.stompClock = 3.1;
         brown.stompT = 0.65;
         this.audio.play('blast');
+        for (const k of battle.knights) {
+          if (k.hp <= 0) continue;
+          k.hp = Math.max(0, k.hp - 8);
+          k.hurt = 1;
+        }
         for (let i = 0; i < 16; i++) {
           const side = i % 2 ? 1 : -1;
           this.spawn({
@@ -1006,6 +1065,9 @@ export class Game {
         }
       }
     }
+
+    battle.hero.hurt = Math.max(0, battle.hero.hurt - dt * 2.2);
+    for (const k of battle.knights) k.hurt = Math.max(0, k.hurt - dt * 2.2);
 
     battle.shardCooldown = Math.max(0, battle.shardCooldown - dt);
     if (this.input.consume('shard') && battle.shardCooldown <= 0) {
@@ -1055,6 +1117,11 @@ export class Game {
     battle.shards = survivors;
     for (const boss of battle.bosses) boss.flash = Math.max(0, boss.flash - dt * 3.8);
 
+    if (battle.hero.hp <= 0 && !battle.heroDown) {
+      battle.heroDown = true;
+      this.showHeroDown();
+      return;
+    }
     if (battle.defeated >= battle.totalDefeats) this.showBossVictory();
   }
 
@@ -1180,6 +1247,193 @@ export class Game {
     this.fadeTarget = 0;
     this.audio.play('ending');
     this.audio.applyBiome('city');
+  }
+
+  showHeroDown() {
+    const battle = this.bossBattle;
+    if (!battle || battle.ending) return;
+    battle.ending = true;
+    this.mode = 'ending';
+    this.ending = {
+      name: 'THE LAST LIGHT',
+      continued: true,
+      lines: [
+        'HER LEGS GIVE OUT IN THE MIDDLE OF THE ROAD.',
+        'THE GHOST SHIELDS CLOSE OVER HER LIKE COLD WATER, AND THE STREET GOES QUIET.',
+        'RED AND YELLOW ARE ALREADY GONE — WAITING AT THE NEXT DOOR.',
+        'WHAT HAPPENS NEXT HAS NOT BEEN WRITTEN YET.',
+      ],
+      count: this.found.size,
+      powers: this.powers.size,
+      t: 0,
+    };
+    this.bossBattle = null;
+    this.fade = 1;
+    this.fadeTarget = 0;
+    this.audio.play('transition');
+    this.audio.applyBiome('city');
+  }
+
+  // ---------------------------------------------------------------- the lookout
+  // She climbs until the mountain gives out, and the valley shows her what is left of the city.
+  beginLookout() {
+    this.frozen = true;
+    this.blocker = null;
+    this.nearby = null;
+    this.nearPower = null;
+    this.card = null;
+    this.note = null;
+    this.lookedOut = true;
+    this.audio.applyBiome('metal');
+    this.audio.play('transition');
+    if (!this.cityScene) this.cityScene = buildCityScene();
+
+    // the ledge: a notch in the ridge, with the rock climbing in at both edges
+    const FOCUS = W * 0.55;
+    const ridge = (x) => {
+      const k = Math.min(1, Math.abs(x - FOCUS) / FOCUS);
+      return 206 - 58 * Math.pow(k, 2.1) + Math.sin(x * 0.05) * 1.6;
+    };
+    const lk = { t: 0, ridge, focus: FOCUS };
+    this.lookout = lk;
+
+    const c = makeCanvas(W, H);
+    const g = c.getContext('2d');
+    g.imageSmoothingEnabled = false;
+    vgrad(g, 0, 0, W, H, [[0, '#03060d'], [0.42, '#0a1524'], [0.78, '#17293c'], [1, '#22384c']], 2);
+    for (let i = 0; i < 150; i++) {
+      const x = hash1(i * 3.7) * W;
+      const y = hash1(i * 9.1) * 118;
+      g.fillStyle = `rgba(214,232,255,${0.14 + hash1(i * 5.3) * 0.5})`;
+      g.fillRect(Math.round(x), Math.round(y), 1, 1);
+    }
+    disc(g, 398, 34, 10, '#dbe6f2');
+    disc(g, 394, 31, 7, '#eef5ff');
+
+    // the city, a long way down and a long way off
+    const far = this.cityScene.layers[0].canvas;
+    const mid = this.cityScene.layers[1].canvas;
+    g.save();
+    g.globalAlpha = 0.72;
+    g.drawImage(far, 0, 122, far.width, 90, 0, 138, W, 52);
+    g.restore();
+    g.save();
+    g.globalCompositeOperation = 'lighter';
+    glow(g, W * 0.5, 196, 180, '#ff8a46', 0.1);
+    glow(g, W * 0.24, 198, 96, '#ff6a30', 0.07);
+    g.restore();
+    g.save();
+    g.globalAlpha = 0.55;
+    g.drawImage(mid, 0, 130, mid.width, 106, 0, 172, W, 40);
+    g.restore();
+    // fog sitting in the valley, thicker the further down you look
+    for (let y = 130; y < 214; y++) {
+      const a = 0.04 + Math.sin(((y - 130) / 84) * Math.PI) * 0.2;
+      g.fillStyle = `rgba(120,152,190,${a})`;
+      g.fillRect(0, y, W, 1);
+    }
+    g.fillStyle = 'rgba(96,126,164,0.16)';
+    g.fillRect(0, 186, W, 12);
+
+    // the ridge she is standing on
+    for (let x = 0; x < W; x++) {
+      const top = Math.round(ridge(x));
+      g.fillStyle = '#05080f';
+      g.fillRect(x, top, 1, H - top);
+      g.fillStyle = 'rgba(206,228,252,0.62)';
+      g.fillRect(x, top, 1, 1);
+      g.fillStyle = 'rgba(120,150,186,0.2)';
+      g.fillRect(x, top + 1, 1, 2 + Math.round(hash1(x * 2.3) * 3));
+      if (hash1(x * 1.7) > 0.74) {
+        g.fillStyle = 'rgba(206,228,252,0.16)';
+        g.fillRect(x, top + 4 + Math.floor(hash1(x * 2.3) * 10), 1, 1);
+      }
+    }
+    for (let i = 0; i < 300; i++) {
+      const x = hash1(i * 4.1) * W;
+      const top = ridge(x);
+      g.fillStyle = `rgba(226,240,255,${0.07 + hash1(i * 8.3) * 0.24})`;
+      g.fillRect(Math.round(x), Math.round(top + 1 + hash1(i * 2.9) * 12), 1, 1);
+    }
+    lk.vista = c;
+    lk.lines = [
+      [0.6, 'SHE CLIMBS UNTIL THE AIR THINS AND THE WIND TURNS TO TEETH.'],
+      [3.0, 'THEN THE MOUNTAIN GIVES OUT — AND THERE IT IS, FAR BELOW.'],
+      [5.8, 'THE CITY. STILL STANDING. NOT THE WAY SHE LEFT IT.'],
+      [8.6, 'SOMETHING DOWN THERE IS STILL BURNING.'],
+    ];
+  }
+
+  updateLookout(dt) {
+    const lk = this.lookout;
+    lk.t += dt;
+    if (lk.t > 1.4 && this.input.consume('interact')) this.endLookout();
+    else if (lk.t > 11.6) this.endLookout();
+  }
+
+  endLookout() {
+    this.lookout = null;
+    this.frozen = false;
+    this.fade = 0.85;
+    this.fadeTarget = 0;
+    this.audio.play('whisper');
+    this.audio.applyBiome(this.level.theme);
+  }
+
+  drawLookout(g) {
+    const lk = this.lookout;
+    const t = lk.t;
+    g.drawImage(lk.vista, 0, 0);
+
+    const gx = lk.focus;
+    const gy = lk.ridge(gx);
+    g.save();
+    g.globalCompositeOperation = 'lighter';
+    glow(g, gx - 4, gy - 16, 46, '#cfe4ff', 0.1);
+    glow(g, gx - 34, gy - 10, 26, '#8fa6c8', 0.07);
+    glow(g, gx + 30, gy - 10, 26, '#8fa6c8', 0.07);
+    g.restore();
+    drawGuardian(g, gx - 32, gy + 6, this.time, 1.1, { scale: 0.74, alpha: 0.72, eye: '#c8dcff', eyeGlow: 0.2 });
+    drawGuardian(g, gx + 29, gy + 5, this.time, 3.4, { scale: 0.68, alpha: 0.66, eye: '#c8dcff', eyeGlow: 0.2 });
+    g.drawImage(GIRL.idle[0], Math.round(gx) - 6, Math.round(gy) - 19);
+
+    for (let i = 0; i < 80; i++) {
+      const sp = 10 + hash1(i * 2.1) * 30;
+      const sx = (hash1(i * 5.7) * (W + 60) + t * sp * 0.7) % (W + 60) - 30;
+      const sy = (hash1(i * 3.3) * H + t * sp) % H;
+      g.fillStyle = `rgba(226,240,255,${0.12 + hash1(i * 7.1) * 0.45})`;
+      g.fillRect(Math.round(sx), Math.round(sy), 1, 1);
+    }
+
+    g.fillStyle = 'rgba(4,7,12,0.7)';
+    g.fillRect(0, 232, W, H - 232);
+    g.fillStyle = 'rgba(150,180,214,0.2)';
+    g.fillRect(0, 232, W, 1);
+
+    let line = null;
+    let at = 0;
+    for (const [when, text] of lk.lines) {
+      if (t >= when) {
+        line = text;
+        at = when;
+      }
+    }
+    if (line) {
+      const a = clamp((t - at) / 0.7, 0, 1) * 0.95;
+      g.save();
+      g.globalAlpha = a;
+      drawText(g, line, W / 2, 241, { align: 'center', color: '#dde5f0', scale: 1, spacing: 1 });
+      g.restore();
+    }
+
+    drawText(g, 'THE LAST JOURNEY', 10, 9, { color: '#5f6b80', scale: 1, spacing: 2 });
+    if (t > 1.4) {
+      const blink = 0.35 + 0.5 * Math.abs(Math.sin(t * 2));
+      g.save();
+      g.globalAlpha = blink;
+      drawText(g, 'E  LOOK AWAY', W - 10, 9, { align: 'right', color: '#7d8a9e', scale: 1 });
+      g.restore();
+    }
   }
 
   // ---------------------------------------------------------------- particles
@@ -1414,6 +1668,12 @@ export class Game {
 
     if (this.mode === 'ending') {
       this.drawEnding(g);
+      this.drawOverlays(g);
+      return;
+    }
+
+    if (this.lookout) {
+      this.drawLookout(g);
       this.drawOverlays(g);
       return;
     }
@@ -1697,13 +1957,16 @@ export class Game {
     for (let i = 1; i >= 0; i--) {
       const gd = this.guardians[i];
       const sx = gd.x - this.cam.x;
+      const knight = battle.knights[i] || { hp: 100, max: 100, hurt: 0 };
+      const fallen = knight.hp <= 0;
       drawGuardian(g, sx, gd.y, this.time, gd.phase, {
         scale: i === 0 ? 1.04 : 0.98,
-        alpha: 0.99,
+        alpha: fallen ? 0.42 : 0.99,
         eye: '#f4f8ff',
         lean: battle.laserActive ? 9 : (battle.brownEngaged ? 5 : 0),
-        eyeGlow: battle.laserActive ? 0.84 : 0.34,
+        eyeGlow: fallen ? 0.08 : (battle.laserActive ? 0.84 : 0.34),
       });
+      this.drawHpBar(g, sx - 14, gd.y - 58, 28, knight.hp / knight.max, '#cfe2ff', knight.hurt);
     }
 
     this.drawPlayer(g);
@@ -1972,6 +2235,24 @@ export class Game {
     if (this.card) this.drawCard(g);
   }
 
+  drawHpBar(g, x, y, w, frac, color, hurt = 0) {
+    const k = clamp(frac, 0, 1);
+    const bx = Math.round(x);
+    const by = Math.round(y);
+    g.save();
+    g.fillStyle = 'rgba(4,5,10,0.78)';
+    g.fillRect(bx - 1, by - 1, w + 2, 5);
+    g.fillStyle = rgba(color, 0.92);
+    g.fillRect(bx, by, Math.round(w * k), 3);
+    g.fillStyle = 'rgba(232,242,255,0.3)';
+    g.fillRect(bx, by, w, 1);
+    if (hurt > 0.02) {
+      g.fillStyle = `rgba(255,255,255,${0.55 * hurt})`;
+      g.fillRect(bx, by, w, 3);
+    }
+    g.restore();
+  }
+
   drawBossBattleUI(g) {
     const battle = this.bossBattle;
     if (!battle) return;
@@ -2000,6 +2281,33 @@ export class Game {
         g.fillStyle = color;
         g.fillRect(entry.x, 31, Math.max(0, entry.w * boss.hp / boss.maxHp), 4);
       }
+    }
+
+    // her bar, and the two that are keeping the heavy one off her back
+    const hero = battle.hero;
+    const heroFrac = clamp(hero.hp / hero.max, 0, 1);
+    const heroCol = heroFrac > 0.55 ? '#8fd0ff' : heroFrac > 0.28 ? '#ffd166' : '#ff6a6a';
+    drawText(g, 'HER', 12, H - 47, { color: '#cfc6e4', scale: 1 });
+    g.fillStyle = 'rgba(4,5,10,0.78)';
+    g.fillRect(11, H - 38, 78, 7);
+    g.fillStyle = heroCol;
+    g.fillRect(12, H - 36, Math.max(0, Math.round(76 * heroFrac)), 3);
+    g.fillStyle = 'rgba(232,242,255,0.26)';
+    g.fillRect(12, H - 36, 76, 1);
+    if (hero.hurt > 0.02) {
+      g.fillStyle = `rgba(255,255,255,${0.5 * hero.hurt})`;
+      g.fillRect(12, H - 36, 76, 3);
+    }
+    for (let i = 0; i < battle.knights.length; i++) {
+      const k = battle.knights[i];
+      const kx = 96 + i * 42;
+      drawText(g, i === 0 ? 'K1' : 'K2', kx, H - 47, { color: '#9fb4cc', scale: 1 });
+      g.fillStyle = 'rgba(4,5,10,0.78)';
+      g.fillRect(kx - 1, H - 38, 36, 7);
+      g.fillStyle = rgba('#cfe2ff', 0.9);
+      g.fillRect(kx, H - 36, Math.max(0, Math.round(34 * clamp(k.hp / k.max, 0, 1))), 3);
+      g.fillStyle = 'rgba(232,242,255,0.26)';
+      g.fillRect(kx, H - 36, 34, 1);
     }
 
     if (battle.escapeBannerT > 0) {

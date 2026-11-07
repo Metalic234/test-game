@@ -81,6 +81,29 @@ const BIOMES = {
     bright: 820,
     music: 0.85,
   },
+  // Heavy metal, and only ever heard while she looks down at the city.
+  metal: {
+    root: 40,
+    chords: [
+      [40, 47, 52],
+      [40, 47, 52],
+      [43, 50, 55],
+      [38, 45, 50],
+    ],
+    scale: [0, 3, 5, 7, 10],
+    chordDur: 3.2,
+    padGain: 0,
+    bellGain: 0,
+    bellEvery: [90, 100],
+    wind: 0.012,
+    windFreq: 260,
+    windQ: 0.6,
+    bright: 2600,
+    music: 1,
+    riff: true,
+    bpm: 152,
+    riffGain: 0.075,
+  },
   village: {
     root: 43,
     chords: [
@@ -112,6 +135,7 @@ export class AudioEngine {
     this.chordIndex = 0;
     this.nextChord = 0;
     this.nextBell = 0;
+    this.riffStep = 0;
   }
 
   async start() {
@@ -254,6 +278,16 @@ export class AudioEngine {
   update() {
     if (!this.ctx || this.ctx.state !== 'running') return;
     const now = this.ctx.currentTime;
+    if (this.cfg.riff) {
+      // metal keeps its own clock: eighth-note chugs, no pads, no bells
+      const stepDur = 60 / this.cfg.bpm / 2;
+      let guard = 0;
+      while (this.nextChord < now + 0.4 && guard++ < 6) {
+        this.metalStep(this.nextChord);
+        this.nextChord += stepDur;
+      }
+      return;
+    }
     let guard = 0;
     while (this.nextChord < now + 0.7 && guard++ < 4) {
       this.scheduleChord(this.nextChord);
@@ -376,6 +410,138 @@ export class AudioEngine {
       default:
         break;
     }
+  }
+
+  // ---- the riff ---------------------------------------------------------
+  metalStep(time) {
+    const c = this.cfg;
+    const step = this.riffStep % 8;
+    const bar = Math.floor(this.riffStep / 8) % c.chords.length;
+    this.riffStep++;
+    // a hole on the last eighth, so every bar lands hard again
+    if (step === 7) return;
+    const chord = c.chords[bar];
+    const push = [0, 0, 0, 0, 3, 0, 6, 0][step];
+    this.chug(time, midi(chord[0] + push - 12), 0.085, c.riffGain);
+    if (step === 0 || step === 3 || step === 5) this.kick(time, 0.17);
+    if (step === 2 || step === 6) this.snare(time, 0.1);
+    this.hat(time, step % 2 ? 0.012 : 0.022);
+    if (step === 0) this.lead(time + 0.02, midi(chord[2] + 12 + (bar === 2 ? 3 : 0)), 0.055);
+  }
+
+  chug(time, freq, dur, gain) {
+    const ctx = this.ctx;
+    const shaper = ctx.createWaveShaper();
+    const curve = new Float32Array(1024);
+    for (let i = 0; i < 1024; i++) {
+      const x = (i / 1023) * 2 - 1;
+      curve[i] = Math.tanh(x * 4.4);
+    }
+    shaper.curve = curve;
+    const filt = ctx.createBiquadFilter();
+    filt.type = 'lowpass';
+    filt.frequency.setValueAtTime(2400, time);
+    filt.frequency.exponentialRampToValueAtTime(720, time + dur);
+    filt.Q.value = 0.9;
+    const g = ctx.createGain();
+    shaper.connect(filt);
+    filt.connect(g);
+    g.connect(this.music);
+    const voices = [['sawtooth', 1, -8], ['sawtooth', 1, 8], ['square', 0.5, 0]];
+    for (const [type, mult, det] of voices) {
+      const o = ctx.createOscillator();
+      o.type = type;
+      o.frequency.value = freq * mult;
+      o.detune.value = det;
+      o.connect(shaper);
+      o.start(time);
+      o.stop(time + dur + 0.03);
+    }
+    g.gain.setValueAtTime(0.0001, time);
+    g.gain.linearRampToValueAtTime(gain, time + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, time + dur);
+  }
+
+  kick(time, gain) {
+    const ctx = this.ctx;
+    const o = ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(132, time);
+    o.frequency.exponentialRampToValueAtTime(42, time + 0.12);
+    const g = ctx.createGain();
+    o.connect(g);
+    g.connect(this.music);
+    g.gain.setValueAtTime(0.0001, time);
+    g.gain.linearRampToValueAtTime(gain, time + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.0001, time + 0.17);
+    o.start(time);
+    o.stop(time + 0.2);
+  }
+
+  snare(time, gain) {
+    const ctx = this.ctx;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    src.playbackRate.value = 1.6;
+    const f = ctx.createBiquadFilter();
+    f.type = 'bandpass';
+    f.frequency.value = 1900;
+    f.Q.value = 0.7;
+    const g = ctx.createGain();
+    src.connect(f);
+    f.connect(g);
+    g.connect(this.music);
+    g.gain.setValueAtTime(0.0001, time);
+    g.gain.linearRampToValueAtTime(gain, time + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001, time + 0.15);
+    src.start(time);
+    src.stop(time + 0.2);
+  }
+
+  hat(time, gain) {
+    const ctx = this.ctx;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    src.playbackRate.value = 3.2;
+    const f = ctx.createBiquadFilter();
+    f.type = 'highpass';
+    f.frequency.value = 6400;
+    const g = ctx.createGain();
+    src.connect(f);
+    f.connect(g);
+    g.connect(this.music);
+    g.gain.setValueAtTime(0.0001, time);
+    g.gain.linearRampToValueAtTime(gain, time + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001, time + 0.05);
+    src.start(time);
+    src.stop(time + 0.08);
+  }
+
+  lead(time, freq, gain) {
+    const ctx = this.ctx;
+    const o = ctx.createOscillator();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(freq * 1.02, time);
+    o.frequency.exponentialRampToValueAtTime(freq * 0.94, time + 0.9);
+    const o2 = ctx.createOscillator();
+    o2.type = 'square';
+    o2.frequency.value = freq * 0.5;
+    const f = ctx.createBiquadFilter();
+    f.type = 'lowpass';
+    f.frequency.value = 3200;
+    const g = ctx.createGain();
+    o.connect(f);
+    o2.connect(f);
+    f.connect(g);
+    g.connect(this.music);
+    g.connect(this.delaySend);
+    g.gain.setValueAtTime(0.0001, time);
+    g.gain.linearRampToValueAtTime(gain, time + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, time + 0.9);
+    o.start(time);
+    o2.start(time);
+    o.stop(time + 0.95);
+    o2.stop(time + 0.95);
   }
 
   step(t) {
