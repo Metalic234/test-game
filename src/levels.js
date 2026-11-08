@@ -85,7 +85,6 @@ const CONFIGS = [
     seed: 4407,
     spawnX: 42,
     exitX: 2700,
-    lookoutX: 2080,
     amp: 4.2,
     points: [
       [0, 244], [300, 237], [600, 226], [900, 210], [1180, 193],

@@ -103,7 +103,7 @@ const BIOMES = {
   },
   // Heavy metal, and only ever heard while she looks down at the city.
   metal: {
-    root: 40,
+    root: 38,
     chords: [
       [40, 47, 52],
       [40, 47, 52],
@@ -121,8 +121,8 @@ const BIOMES = {
     bright: 2600,
     music: 1,
     riff: true,
-    bpm: 152,
-    riffGain: 0.075,
+    bpm: 168,
+    riffGain: 0.1,
   },
   village: {
     root: 43,
@@ -442,11 +442,19 @@ export class AudioEngine {
     if (step === 7) return;
     const chord = c.chords[bar];
     const push = [0, 0, 0, 0, 3, 0, 6, 0][step];
-    this.chug(time, midi(chord[0] + push - 12), 0.085, c.riffGain);
-    if (step === 0 || step === 3 || step === 5) this.kick(time, 0.17);
-    if (step === 2 || step === 6) this.snare(time, 0.1);
-    this.hat(time, step % 2 ? 0.012 : 0.022);
-    if (step === 0) this.lead(time + 0.02, midi(chord[2] + 12 + (bar === 2 ? 3 : 0)), 0.055);
+    const low = midi(chord[0] + push - 12);
+    this.chug(time, low, 0.085, c.riffGain);
+    // a muted gallop between the eighths, and a fifth stacked above the root
+    this.chug(time + 0.075, low, 0.05, c.riffGain * 0.68);
+    this.chug(time, midi(chord[0] + push - 5), 0.08, c.riffGain * 0.4);
+    if (step === 0 || step === 3 || step === 5) this.kick(time, 0.19);
+    if (step === 2 || step === 6) this.snare(time, 0.12);
+    this.hat(time, step % 2 ? 0.014 : 0.024);
+    if (step === 0) {
+      this.crash(time, 0.055);
+      this.lead(time + 0.02, midi(chord[2] + 12 + (bar === 2 ? 3 : 0)), 0.055);
+    }
+    if (step === 4) this.lead(time + 0.01, midi(chord[1] + 24), 0.038);
   }
 
   chug(time, freq, dur, gain) {
@@ -496,6 +504,23 @@ export class AudioEngine {
     g.gain.exponentialRampToValueAtTime(0.0001, time + 0.17);
     o.start(time);
     o.stop(time + 0.2);
+  }
+
+  crash(time, gain) {
+    const ctx = this.ctx;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    const f = ctx.createBiquadFilter();
+    f.type = 'highpass';
+    f.frequency.value = 4200;
+    const g = ctx.createGain();
+    src.connect(f);
+    f.connect(g);
+    g.connect(this.music);
+    g.gain.setValueAtTime(gain, time);
+    g.gain.exponentialRampToValueAtTime(0.0001, time + 0.9);
+    src.start(time);
+    src.stop(time + 1.0);
   }
 
   snare(time, gain) {
@@ -632,9 +657,12 @@ export class AudioEngine {
   }
 
   endingTone(t) {
+    // The last chord is a low, distorted power chord under the riff, not a bell.
     const root = this.cfg.root;
-    [0, 7, 12, 16, 19].forEach((n, i) => {
-      this.bell(midi(root + 12 + n), t + i * 0.22, 4.5, 0.085, true);
+    [0, 7, 12].forEach((n, i) => {
+      this.chug(t + i * 0.025, midi(root + n), 2.2, 0.1 - i * 0.015);
     });
+    this.crash(t, 0.06);
+    this.lead(t + 0.1, midi(root + 31), 0.07);
   }
 }

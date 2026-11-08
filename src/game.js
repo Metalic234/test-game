@@ -121,6 +121,7 @@ export class Game {
     this.cityScene = null;
     this.lookout = null;
     this.lookedOut = false;
+    this.climbEpilogue = false;
     this.bob = 0;
 
     this.cam = { x: 0, y: 0 };
@@ -189,6 +190,7 @@ export class Game {
     this.blocker = null;
     this.lookout = null;
     this.lookedOut = false;
+    this.climbEpilogue = false;
     this.audio.applyBiome(this.level.theme);
     this.showCard(this.level);
   }
@@ -925,10 +927,16 @@ export class Game {
 
     // Blue has to survive long enough for the duel to be a duel. At 3 damage
     // per volley he needs a real pool, not a two-second formality.
-    const hp = [84, 0, 0, 48];
+    const hp = [84, 0, 0, 132];
+    // The whole last street is the arena: one opponent at a time, and room to run.
+    const arenaMin = Math.max(24, playerX - 110);
+    const arenaMax = Math.min(this.level.width - 150, playerX + 380);
     this.bossBattle = {
       t: 0,
       playerX,
+      arenaMin,
+      arenaMax,
+      phase: 'blue',
       guardianTargets,
       guardianXs: this.guardians.map((gd) => gd.x),
       bosses: (this.level.teens || []).map((teen, i) => ({
@@ -950,7 +958,12 @@ export class Game {
         stormCooldown: 0,
         // Blue gives her a breath before his first mark, so the read is learnable.
         attackCooldown: i === 0 ? 1.6 : 1.0 + i * 0.35,
-        stompClock: i === 3 ? 1.4 : 0,
+        slamT: 0,
+        slamMax: 0.9,
+        slamX: teen.x,
+        slamClock: 1.9,
+        slamRecover: 0,
+        slamPending: false,
         stompT: 0,
       })),
       hero: { hp: 100, max: 100, hurt: 0 },
@@ -961,8 +974,8 @@ export class Game {
       laserDamageT: 0,
       defeated: 0,
       totalDefeats: 2,
-      // The knights take the heavy one together while the girl duels Blue.
-      brownEngaged: true,
+      // Blue first. Brown is not on the street until the duel is finished.
+      brownEngaged: false,
       escapeBannerT: 4.2,
       ending: false,
     };
@@ -984,9 +997,8 @@ export class Game {
     }
 
     const p = this.player;
-    // Keep the encounter in a compact arena, but let her dodge in both directions.
-    p.x = clamp(p.x, battle.playerX - 42, battle.playerX + 54);
-    p.facing = 1;
+    // The last street is the arena. One opponent, and enough room to leave a mark.
+    p.x = clamp(p.x, battle.arenaMin, battle.arenaMax);
     p.y = groundAt(this.level, p.x);
     p.onGround = true;
 
@@ -1134,31 +1146,68 @@ export class Game {
     // Brown is a true juggernaut. He only advances after Blue falls, slowly
     // enough for the girl and both guardians to turn their attention together.
     if (brown && brown.alive && battle.brownEngaged) {
-      const targetX = p.x + 118;
-      const step = 25 * dt;
-      brown.x += clamp(targetX - brown.x, -step, step);
-      brown.y = groundAt(this.level, brown.x);
-      brown.stompClock -= dt;
-      brown.stompT = Math.max(0, (brown.stompT || 0) - dt);
-      if (brown.stompClock <= 0) {
-        brown.stompClock = 3.1;
-        brown.stompT = 0.65;
-        this.audio.play('blast');
-        for (let i = 0; i < 16; i++) {
-          const side = i % 2 ? 1 : -1;
-          this.spawn({
-            type: 'spark',
-            x: brown.x + side * (8 + Math.random() * 12),
-            y: groundAt(this.level, brown.x) - 2,
-            vx: side * (24 + Math.random() * 52),
-            vy: -8 - Math.random() * 22,
-            size: i % 3 ? 1 : 2,
-            color: i % 2 ? '#c89a68' : '#ffffff',
-            max: 0.35 + Math.random() * 0.3,
-            grav: 46,
-            drag: 0.94,
-          });
+      const fury = 1 - brown.hp / brown.maxHp;
+      brown.slamRecover = Math.max(0, brown.slamRecover - dt);
+      brown.stompT = Math.max(0, brown.stompT - dt);
+
+      if (brown.slamT > 0) {
+        // The mark is fixed where she stood: the whole windup is hers to leave.
+        brown.slamT = Math.max(0, brown.slamT - dt);
+        if (brown.slamT <= 0 && brown.slamPending) {
+          brown.slamPending = false;
+          brown.stompT = 0.65;
+          const markX = brown.slamX;
+          const hit = Math.abs(p.x - markX) < 40 && battle.hero.hp > 0;
+          if (hit) {
+            battle.hero.hp = Math.max(0, battle.hero.hp - 16);
+            battle.hero.hurt = 1;
+            this.audio.play('whisper');
+            for (let i = 0; i < 14; i++) {
+              const a = Math.random() * TAU;
+              const sp = 14 + Math.random() * 58;
+              this.spawn({
+                type: 'spark',
+                x: p.x, y: p.y - 10,
+                vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 14,
+                size: i % 3 ? 1 : 2, color: i % 2 ? '#ffffff' : '#f0c396',
+                max: 0.35 + Math.random() * 0.45, grav: 60, drag: 0.93,
+              });
+            }
+          }
+          this.audio.play('blast');
+          for (let i = 0; i < 22; i++) {
+            const side = i % 2 ? 1 : -1;
+            this.spawn({
+              type: 'spark',
+              x: markX + side * (4 + Math.random() * 14),
+              y: groundAt(this.level, markX) - 2,
+              vx: side * (30 + Math.random() * 70),
+              vy: -10 - Math.random() * 34,
+              size: i % 3 ? 1 : 2,
+              color: i % 2 ? '#c89a68' : '#ffe0b8',
+              max: 0.4 + Math.random() * 0.5,
+              grav: 52,
+              drag: 0.94,
+            });
+          }
+          brown.slamClock = 2.4 - 0.95 * fury;
+          brown.slamRecover = 0.5;
         }
+      } else if (brown.slamRecover <= 0) {
+        // He closes in slowly, then plants his feet and commits the blow.
+        const targetX = Math.min(p.x + 104, this.level.width - 60);
+        const step = 46 * dt;
+        brown.x += clamp(targetX - brown.x, -step, step);
+        brown.y = groundAt(this.level, brown.x);
+        brown.slamClock -= dt;
+        if (brown.slamClock <= 0) {
+          brown.slamT = brown.slamMax;
+          brown.slamX = p.x;
+          brown.slamPending = true;
+          this.audio.play('power');
+        }
+      } else {
+        brown.y = groundAt(this.level, brown.x);
       }
     }
 
@@ -1312,9 +1361,16 @@ export class Game {
         });
       }
       if (boss.kind === 'blue') {
-        // The heavy one now advances; the girl and both guardians face him together.
+        // The duel is over. The street opens, and the heavy one steps out of the dark.
         const brown = battle.bosses.find((entry) => entry.kind === 'brown');
-        if (brown) brown.stompClock = 0.85;
+        if (brown) {
+          brown.x = Math.min(this.level.width - 24, battle.arenaMax + 100);
+          brown.y = groundAt(this.level, brown.x);
+          brown.slamClock = 1.9;
+          brown.slamRecover = 0;
+        }
+        battle.brownEngaged = true;
+        battle.phase = 'brown';
         this.player.facing = 1;
       }
       if (boss.kind === 'brown') this.beginBrownFinish(boss);
@@ -1413,7 +1469,7 @@ export class Game {
       }
     }
 
-    if (f.t > 5.0) this.showPortArrival();
+    if (f.t > 5.0) this.showClimbEpilogue();
   }
 
   drawBrownFinish(g) {
@@ -1480,11 +1536,27 @@ export class Game {
 
   // The street is done with them. The road goes down to the water.
   showPortArrival() {
-    if (!this.bossBattle) return;
+    if (this.mode === 'ending') return;
     this.bossBattle = null;
     this.mode = 'play';
     this.player.facing = 1;
     this.beginTransition();
+  }
+
+  // Both of them are down. Before the water, the long way up, and the city below.
+  showClimbEpilogue() {
+    if (this.mode === 'ending') return;
+    this.bossBattle = null;
+    this.mode = 'play';
+    this.climbEpilogue = true;
+    this.beginLookout();
+    this.lookout.lines = [
+      [0.6, 'SHE LEAVES THE LAST STREET AND CLIMBS UNTIL THE AIR THINS.'],
+      [3.4, 'THE WIND TURNS TO TEETH. THE MOUNTAIN GIVES OUT.'],
+      [6.4, 'BELOW HER: THE CITY, STILL BURNING. BOTH OF THEM GONE.'],
+      [9.4, 'THE ROAD IS HERS NOW. IT GOES DOWN TO THE WATER.'],
+    ];
+    this.audio.play('power');
   }
 
   // The deck under her feet and the water under that. The ship takes her the rest of the way.
@@ -1506,6 +1578,8 @@ export class Game {
     };
     this.fade = 1;
     this.fadeTarget = 0;
+    // The last song is the same one the mountain heard: heavy, and hers.
+    this.audio.applyBiome('metal');
     this.audio.play('ending');
   }
 
@@ -1634,9 +1708,14 @@ export class Game {
   endLookout() {
     this.lookout = null;
     this.frozen = false;
+    this.audio.play('whisper');
+    if (this.climbEpilogue) {
+      this.climbEpilogue = false;
+      this.showPortArrival();
+      return;
+    }
     this.fade = 0.85;
     this.fadeTarget = 0;
-    this.audio.play('whisper');
     this.audio.applyBiome(this.level.theme);
   }
 
@@ -1691,7 +1770,7 @@ export class Game {
       const blink = 0.35 + 0.5 * Math.abs(Math.sin(t * 2));
       g.save();
       g.globalAlpha = blink;
-      drawText(g, 'E  LOOK AWAY', W - 10, 9, { align: 'right', color: '#7d8a9e', scale: 1 });
+      drawText(g, this.climbEpilogue ? 'E  GO ON' : 'E  LOOK AWAY', W - 10, 9, { align: 'right', color: '#7d8a9e', scale: 1 });
       g.restore();
     }
   }
@@ -2170,7 +2249,7 @@ export class Game {
     const L = this.level;
 
     // The knights' beam reaches past the girl toward the heavy brown boss.
-    if (battle.laserActive) this.drawGuardianLaser(g);
+    if (battle.laserActive && battle.brownEngaged) this.drawGuardianLaser(g);
 
     // And then, once he is down, the two of them finish it together.
     if (battle.finish) this.drawBrownFinish(g);
@@ -2197,19 +2276,21 @@ export class Game {
       g.restore();
     }
 
-    // Active opponents: Blue duels the girl; Brown waits as the slow juggernaut.
+    // Active opponents: Blue duels the girl first; the heavy one arrives after.
     for (const boss of battle.bosses) {
       if (!boss.alive || boss.fleeing) continue;
       const sx = boss.x - this.cam.x;
       if (sx < -80 || sx > W + 80) continue;
       const isBlue = boss.kind === 'blue';
+      if (!isBlue && !battle.brownEngaged) continue;
       drawTeen(g, sx, groundAt(L, boss.x), this.time, {
         color: boss.color,
         style: boss.style,
         scale: boss.scale,
         flare: boss.flash > 0 ? 1.65
           : (isBlue && (boss.lungeT > 0 || boss.storm) ? 1.35
-            : isBlue && boss.windupT > 0 ? 1.24 : 0.92),
+            : isBlue && boss.windupT > 0 ? 1.24
+              : !isBlue && boss.slamT > 0 ? 1.32 : 0.92),
         facing: -1,
       });
       if (boss.flash > 0) {
@@ -2273,6 +2354,31 @@ export class Game {
           g.restore();
         }
       }
+      // The heavy one's overhead blow: the ring is where his fist will land.
+      if (!isBlue && boss.slamT > 0) {
+        const k = clamp(1 - boss.slamT / boss.slamMax, 0, 1);
+        const mx = boss.slamX - this.cam.x;
+        const my = groundAt(L, boss.slamX) - 2;
+        if (mx > -50 && mx < W + 50) {
+          g.save();
+          g.globalCompositeOperation = 'lighter';
+          g.globalAlpha = 0.3 + k * 0.5;
+          glow(g, mx, my - 8, 22 + k * 32, '#d6a06a', 0.5);
+          g.strokeStyle = '#f0c396';
+          g.lineWidth = 2;
+          g.beginPath();
+          g.ellipse(mx, my, 40 - k * 8, 6, 0, 0, TAU);
+          g.stroke();
+          g.strokeStyle = 'rgba(240,195,150,0.55)';
+          g.lineWidth = 1;
+          g.beginPath();
+          g.ellipse(mx, my, 25 - k * 5, 4, 0, 0, TAU);
+          g.stroke();
+          g.fillStyle = 'rgba(240,195,150,0.4)';
+          g.fillRect(Math.round(mx), Math.round(my) - 58 + k * 20, 1, 36);
+          g.restore();
+        }
+      }
       if (isBlue && boss.lungeT > 0.12 && Math.abs(boss.x - this.player.x) < 48) {
         const girlX = this.player.x - this.cam.x;
         const slashY = groundAt(L, boss.x) - 21;
@@ -2290,7 +2396,7 @@ export class Game {
       }
       if (boss.kind === 'brown' && boss.stompT > 0) {
         const pulse = 1 - boss.stompT / 0.65;
-        const radius = 16 + pulse * 34;
+        const radius = 18 + pulse * 58;
         g.save();
         g.globalCompositeOperation = 'lighter';
         g.globalAlpha = (1 - pulse) * 0.7;
@@ -2590,17 +2696,20 @@ export class Game {
     g.fillStyle = 'rgba(3,4,10,0.68)';
     g.fillRect(48, 4, W - 96, 39);
     const blueBoss = battle.bosses.find((boss) => boss.kind === 'blue');
-    const heading = blueBoss && blueBoss.alive
-      ? (blueBoss.storm ? 'BLUE STORM  /  BROWN HEAVY' : 'BLUE DUEL  /  BROWN HEAVY')
-      : 'THE HEAVY ONE';
+    const brownBoss = battle.bosses.find((boss) => boss.kind === 'brown');
+    const blueAlive = blueBoss && blueBoss.alive;
+    const brownAlive = brownBoss && brownBoss.alive;
+    const heading = blueAlive
+      ? (blueBoss.storm ? 'THE STORM' : 'THE DUEL')
+      : brownAlive ? 'THE HEAVY ONE' : 'THE LAST LIGHT';
     drawText(g, heading, W / 2, 7, {
       align: 'center', color: '#e9edf6', scale: 1, spacing: 2, shadow: '#000000',
     });
 
-    const entries = [
-      { kind: 'blue', label: 'BLUE  /  DUEL', x: 88, w: 128 },
-      { kind: 'brown', label: 'BROWN  /  HEAVY', x: 264, w: 128 },
-    ];
+    // One opponent at a time: only the one she is actually fighting gets a bar.
+    const entries = blueAlive
+      ? [{ kind: 'blue', label: blueBoss.storm ? 'BLUE  /  STORM' : 'BLUE  /  DUEL', x: 176, w: 128 }]
+      : [{ kind: 'brown', label: 'BROWN  /  HEAVY', x: 176, w: 128 }];
     for (const entry of entries) {
       const boss = battle.bosses.find((item) => item.kind === entry.kind);
       const color = boss ? boss.color : '#ffffff';
@@ -2647,17 +2756,20 @@ export class Game {
         align: 'center', color: f.fired ? '#ffffff' : '#c8d4e6', scale: 1, spacing: 1, shadow: '#000000',
       });
     } else {
-      const laserText = battle.laserActive
-        ? (battle.brownEngaged ? 'GUARDIANS: HEAVY BEAM' : 'GUARDIANS: CHARGING')
-        : 'HOLD C  KNIGHTS\' WIDE LASER';
-      const storming = blueBoss && blueBoss.alive && blueBoss.storm;
-      const marked = blueBoss && blueBoss.alive && blueBoss.windupT > 0;
+      const laserText = battle.brownEngaged
+        ? (battle.laserActive ? 'GUARDIANS: HEAVY BEAM' : 'HOLD C  KNIGHTS\' WIDE LASER')
+        : 'THE KNIGHTS HOLD THE STREET';
+      const storming = blueAlive && blueBoss.storm;
+      const marked = blueAlive && blueBoss.windupT > 0;
+      const bracing = brownAlive && brownBoss.slamT > 0;
       const hint = storming
         ? 'KEEP MOVING - OUT OF THE MARKS'
-        : marked ? 'STEP OUT OF THE MARK' : 'X  WHITE SHARDS';
+        : marked ? 'STEP OUT OF THE MARK'
+          : bracing ? 'CLEAR THE MARK'
+            : (blueAlive ? 'X  WHITE SHARDS' : 'X  SHARDS    HOLD C  BEAM');
       drawText(g, hint, W / 2, H - 25, {
         align: 'center',
-        color: (storming || marked) ? '#b9d7ff' : '#f2f0f7',
+        color: (storming || marked) ? '#b9d7ff' : bracing ? '#f0c396' : '#f2f0f7',
         scale: 1, spacing: 1, shadow: '#000000',
       });
       drawText(g, laserText, W / 2, H - 13, {
