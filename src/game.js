@@ -923,7 +923,9 @@ export class Game {
       gd.hover = i === 0 ? 22 : 28;
     });
 
-    const hp = [14, 0, 0, 48];
+    // Blue has to survive long enough for the duel to be a duel. At 3 damage
+    // per volley he needs a real pool, not a two-second formality.
+    const hp = [84, 0, 0, 48];
     this.bossBattle = {
       t: 0,
       playerX,
@@ -941,7 +943,11 @@ export class Game {
         escaped: false,
         fleeSpeed: i === 1 ? 164 : 190,
         lungeT: 0,
-        attackCooldown: 1.0 + i * 0.35,
+        windupT: 0,
+        windupMax: 0.46,
+        strikeX: teen.x,
+        // Blue gives her a breath before his first mark, so the read is learnable.
+        attackCooldown: i === 0 ? 1.6 : 1.0 + i * 0.35,
         stompClock: i === 3 ? 1.4 : 0,
         stompT: 0,
       })),
@@ -1005,20 +1011,37 @@ export class Game {
     const blue = battle.bosses.find((boss) => boss.kind === 'blue');
     const brown = battle.bosses.find((boss) => boss.kind === 'brown');
 
-    // Blue closes in and lunges at the girl: this is her one-on-one duel.
+    // Blue marks the ground at her feet, then strikes it. The mark is fixed the
+    // moment it appears, so a step out of it always saves her: every hit is one
+    // she could have read. He still presses harder the closer he is to falling.
+    // Roughly a dozen seconds of volleys, long enough for her health to matter.
     if (blue && blue.alive) {
       blue.attackCooldown -= dt;
-      if (blue.attackCooldown <= 0 && blue.lungeT <= 0) {
-        blue.lungeT = 0.3;
-        blue.attackCooldown = 1.65;
-        blue.pendingHit = true;
+
+      if (blue.attackCooldown <= 0 && blue.lungeT <= 0 && blue.windupT <= 0) {
+        blue.windupT = blue.windupMax;
+        blue.strikeX = p.x;
+        blue.pendingHit = false;
+        this.audio.play('power');
+      }
+      if (blue.windupT > 0) {
+        blue.windupT = Math.max(0, blue.windupT - dt);
+        if (blue.windupT <= 0) {
+          blue.lungeT = 0.26;
+          const fury = 1 - blue.hp / blue.maxHp;
+          blue.attackCooldown = 1.62 - 0.22 * fury;
+          blue.pendingHit = true;
+        }
       }
       if (blue.lungeT > 0) {
         blue.lungeT = Math.max(0, blue.lungeT - dt);
-        if (blue.pendingHit && blue.lungeT <= 0.14) {
+        if (blue.pendingHit && blue.lungeT <= 0.12) {
           blue.pendingHit = false;
-          if (Math.abs(blue.x - p.x) < 26 && battle.hero.hp > 0) {
-            battle.hero.hp = Math.max(0, battle.hero.hp - 9);
+          const markX = blue.strikeX;
+          const inMark = Math.abs(p.x - markX) < 24;
+          const inReach = Math.abs(blue.x - p.x) < 44;
+          if (inMark && inReach && battle.hero.hp > 0) {
+            battle.hero.hp = Math.max(0, battle.hero.hp - 11);
             battle.hero.hurt = 1;
             this.audio.play('whisper');
             for (let i = 0; i < 10; i++) {
@@ -1029,11 +1052,24 @@ export class Game {
                 max: 0.4, grav: 80, drag: 0.95,
               });
             }
+          } else {
+            // Her step took her clear; the strike dies on the stones.
+            for (let i = 0; i < 6; i++) {
+              this.spawn({
+                type: 'spark', x: markX, y: groundAt(this.level, markX) - 3,
+                vx: (Math.random() - 0.5) * 46, vy: -6 - Math.random() * 22,
+                size: 1, color: i % 2 ? '#9fc8ff' : '#ffffff',
+                max: 0.3, grav: 60, drag: 0.94,
+              });
+            }
           }
         }
       }
-      const blueOffset = blue.lungeT > 0 ? 13 : 34;
-      const blueTarget = clamp(p.x + blueOffset, p.x + 12, p.x + 48);
+
+      let blueTarget;
+      if (blue.lungeT > 0) blueTarget = blue.strikeX + 13;
+      else if (blue.windupT > 0) blueTarget = blue.strikeX + 26;
+      else blueTarget = p.x + 34;
       blue.x = damp(blue.x, blueTarget, blue.lungeT > 0 ? 9 : 3.8, dt);
       blue.y = groundAt(this.level, blue.x);
     }
@@ -1074,7 +1110,8 @@ export class Game {
     battle.shardCooldown = Math.max(0, battle.shardCooldown - dt);
     if (this.input.consume('shard') && battle.shardCooldown <= 0) {
       this.throwWhiteShards();
-      battle.shardCooldown = 0.24;
+      // The duel is fought volley by volley; once Blue falls, she can pour it on.
+      battle.shardCooldown = blue && blue.alive ? 0.4 : 0.24;
     }
 
     const laserNow = this.input.down('laser');
@@ -2113,7 +2150,8 @@ export class Game {
         color: boss.color,
         style: boss.style,
         scale: boss.scale,
-        flare: boss.flash > 0 ? 1.65 : (isBlue && boss.lungeT > 0 ? 1.35 : 0.92),
+        flare: boss.flash > 0 ? 1.65
+          : (isBlue && boss.lungeT > 0 ? 1.35 : isBlue && boss.windupT > 0 ? 1.24 : 0.92),
         facing: -1,
       });
       if (boss.flash > 0) {
@@ -2123,7 +2161,27 @@ export class Game {
         g.fillRect(Math.round(sx - 10), Math.round(groundAt(L, boss.x) - 48), 20, 46);
         g.restore();
       }
-      if (isBlue && boss.lungeT > 0.12) {
+      // The mark he has chosen: it tightens as the strike comes due.
+      if (isBlue && boss.windupT > 0) {
+        const k = clamp(1 - boss.windupT / boss.windupMax, 0, 1);
+        const mx = boss.strikeX - this.cam.x;
+        const my = groundAt(L, boss.strikeX) - 2;
+        if (mx > -30 && mx < W + 30) {
+          g.save();
+          g.globalCompositeOperation = 'lighter';
+          g.globalAlpha = 0.3 + k * 0.55;
+          glow(g, mx, my - 6, 10 + k * 14, '#6fa8ff', 0.55);
+          g.strokeStyle = '#b9d7ff';
+          g.lineWidth = 1;
+          g.beginPath();
+          g.ellipse(mx, my, 23 - k * 5, 4, 0, 0, TAU);
+          g.stroke();
+          g.fillStyle = 'rgba(185,215,255,0.5)';
+          g.fillRect(Math.round(mx), Math.round(my) - 26, 1, 22);
+          g.restore();
+        }
+      }
+      if (isBlue && boss.lungeT > 0.12 && Math.abs(boss.x - this.player.x) < 48) {
         const girlX = this.player.x - this.cam.x;
         const slashY = groundAt(L, boss.x) - 21;
         g.save();
@@ -2498,8 +2556,9 @@ export class Game {
       const laserText = battle.laserActive
         ? (battle.brownEngaged ? 'GUARDIANS: HEAVY BEAM' : 'GUARDIANS: CHARGING')
         : 'HOLD C  KNIGHTS\' WIDE LASER';
-      drawText(g, 'X  WHITE SHARDS', W / 2, H - 25, {
-        align: 'center', color: '#f2f0f7', scale: 1, spacing: 1, shadow: '#000000',
+      const marked = blueBoss && blueBoss.alive && blueBoss.windupT > 0;
+      drawText(g, marked ? 'STEP OUT OF THE MARK' : 'X  WHITE SHARDS', W / 2, H - 25, {
+        align: 'center', color: marked ? '#b9d7ff' : '#f2f0f7', scale: 1, spacing: 1, shadow: '#000000',
       });
       drawText(g, laserText, W / 2, H - 13, {
         align: 'center', color: battle.laserActive ? '#ffffff' : '#b8c7da', scale: 1, spacing: 1, shadow: '#000000',
