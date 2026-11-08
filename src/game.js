@@ -946,6 +946,8 @@ export class Game {
         windupT: 0,
         windupMax: 0.46,
         strikeX: teen.x,
+        storm: null,
+        stormCooldown: 0,
         // Blue gives her a breath before his first mark, so the read is learnable.
         attackCooldown: i === 0 ? 1.6 : 1.0 + i * 0.35,
         stompClock: i === 3 ? 1.4 : 0,
@@ -1013,64 +1015,119 @@ export class Game {
 
     // Blue marks the ground at her feet, then strikes it. The mark is fixed the
     // moment it appears, so a step out of it always saves her: every hit is one
-    // she could have read. He still presses harder the closer he is to falling.
+    // she could have read. In his last third he stops lunging and calls the
+    // storm — three marks in a row, each fixed where she was standing.
     // Roughly a dozen seconds of volleys, long enough for her health to matter.
     if (blue && blue.alive) {
-      blue.attackCooldown -= dt;
-
-      if (blue.attackCooldown <= 0 && blue.lungeT <= 0 && blue.windupT <= 0) {
-        blue.windupT = blue.windupMax;
-        blue.strikeX = p.x;
-        blue.pendingHit = false;
-        this.audio.play('power');
-      }
-      if (blue.windupT > 0) {
-        blue.windupT = Math.max(0, blue.windupT - dt);
-        if (blue.windupT <= 0) {
-          blue.lungeT = 0.26;
-          const fury = 1 - blue.hp / blue.maxHp;
-          blue.attackCooldown = 1.62 - 0.22 * fury;
-          blue.pendingHit = true;
+      if (blue.storm) {
+        const s = blue.storm;
+        s.t += dt;
+        if (s.spawned < 3 && s.t >= 0.35 + s.spawned * 0.55) {
+          s.marks.push({ x: p.x, w: 0.55 });
+          s.spawned++;
+          this.audio.play('jump');
         }
-      }
-      if (blue.lungeT > 0) {
-        blue.lungeT = Math.max(0, blue.lungeT - dt);
-        if (blue.pendingHit && blue.lungeT <= 0.12) {
-          blue.pendingHit = false;
-          const markX = blue.strikeX;
-          const inMark = Math.abs(p.x - markX) < 24;
-          const inReach = Math.abs(blue.x - p.x) < 44;
-          if (inMark && inReach && battle.hero.hp > 0) {
-            battle.hero.hp = Math.max(0, battle.hero.hp - 11);
+        for (let i = s.marks.length - 1; i >= 0; i--) {
+          const mark = s.marks[i];
+          mark.w -= dt;
+          if (mark.w > 0) continue;
+          s.marks.splice(i, 1);
+          const hit = Math.abs(p.x - mark.x) < 22 && battle.hero.hp > 0;
+          if (hit) {
+            battle.hero.hp = Math.max(0, battle.hero.hp - 9);
             battle.hero.hurt = 1;
-            this.audio.play('whisper');
-            for (let i = 0; i < 10; i++) {
-              this.spawn({
-                type: 'spark', x: p.x, y: p.y - 12,
-                vx: (Math.random() - 0.5) * 70, vy: -Math.random() * 60,
-                size: 1, color: i % 2 ? '#ffffff' : '#9fc8ff',
-                max: 0.4, grav: 80, drag: 0.95,
-              });
-            }
-          } else {
-            // Her step took her clear; the strike dies on the stones.
-            for (let i = 0; i < 6; i++) {
-              this.spawn({
-                type: 'spark', x: markX, y: groundAt(this.level, markX) - 3,
-                vx: (Math.random() - 0.5) * 46, vy: -6 - Math.random() * 22,
-                size: 1, color: i % 2 ? '#9fc8ff' : '#ffffff',
-                max: 0.3, grav: 60, drag: 0.94,
-              });
+          }
+          this.audio.play('blast');
+          for (let k = 0; k < (hit ? 16 : 9); k++) {
+            const a = Math.random() * TAU;
+            const sp = 10 + Math.random() * 52;
+            this.spawn({
+              type: 'spark',
+              x: mark.x + (Math.random() - 0.5) * 6,
+              y: groundAt(this.level, mark.x) - 4 - Math.random() * 16,
+              vx: Math.cos(a) * sp,
+              vy: Math.sin(a) * sp - 18,
+              size: k % 4 ? 1 : 2,
+              color: k % 2 ? '#ffffff' : '#9fc8ff',
+              max: 0.3 + Math.random() * 0.35,
+              grav: 70,
+              drag: 0.94,
+            });
+          }
+        }
+        if (s.spawned >= 3 && s.marks.length === 0) {
+          blue.storm = null;
+          blue.stormCooldown = 1.25;
+        }
+      } else if (blue.hp <= blue.maxHp / 3) {
+        // The blade goes down, and the sky answers.
+        if (blue.stormCooldown > 0) {
+          blue.stormCooldown -= dt;
+        } else {
+          blue.storm = { t: 0, spawned: 0, marks: [] };
+          blue.windupT = 0;
+          blue.lungeT = 0;
+          blue.pendingHit = false;
+          this.audio.play('power');
+        }
+      } else {
+        blue.attackCooldown -= dt;
+
+        if (blue.attackCooldown <= 0 && blue.lungeT <= 0 && blue.windupT <= 0) {
+          blue.windupT = blue.windupMax;
+          blue.strikeX = p.x;
+          blue.pendingHit = false;
+          this.audio.play('power');
+        }
+        if (blue.windupT > 0) {
+          blue.windupT = Math.max(0, blue.windupT - dt);
+          if (blue.windupT <= 0) {
+            blue.lungeT = 0.26;
+            const fury = 1 - blue.hp / blue.maxHp;
+            blue.attackCooldown = 1.62 - 0.22 * fury;
+            blue.pendingHit = true;
+          }
+        }
+        if (blue.lungeT > 0) {
+          blue.lungeT = Math.max(0, blue.lungeT - dt);
+          if (blue.pendingHit && blue.lungeT <= 0.12) {
+            blue.pendingHit = false;
+            const markX = blue.strikeX;
+            const inMark = Math.abs(p.x - markX) < 24;
+            const inReach = Math.abs(blue.x - p.x) < 44;
+            if (inMark && inReach && battle.hero.hp > 0) {
+              battle.hero.hp = Math.max(0, battle.hero.hp - 11);
+              battle.hero.hurt = 1;
+              this.audio.play('whisper');
+              for (let i = 0; i < 10; i++) {
+                this.spawn({
+                  type: 'spark', x: p.x, y: p.y - 12,
+                  vx: (Math.random() - 0.5) * 70, vy: -Math.random() * 60,
+                  size: 1, color: i % 2 ? '#ffffff' : '#9fc8ff',
+                  max: 0.4, grav: 80, drag: 0.95,
+                });
+              }
+            } else {
+              // Her step took her clear; the strike dies on the stones.
+              for (let i = 0; i < 6; i++) {
+                this.spawn({
+                  type: 'spark', x: markX, y: groundAt(this.level, markX) - 3,
+                  vx: (Math.random() - 0.5) * 46, vy: -6 - Math.random() * 22,
+                  size: 1, color: i % 2 ? '#9fc8ff' : '#ffffff',
+                  max: 0.3, grav: 60, drag: 0.94,
+                });
+              }
             }
           }
         }
       }
 
       let blueTarget;
-      if (blue.lungeT > 0) blueTarget = blue.strikeX + 13;
+      if (blue.storm) blueTarget = p.x + 44;
+      else if (blue.lungeT > 0) blueTarget = blue.strikeX + 13;
       else if (blue.windupT > 0) blueTarget = blue.strikeX + 26;
       else blueTarget = p.x + 34;
-      blue.x = damp(blue.x, blueTarget, blue.lungeT > 0 ? 9 : 3.8, dt);
+      blue.x = damp(blue.x, blueTarget, blue.storm ? 5 : (blue.lungeT > 0 ? 9 : 3.8), dt);
       blue.y = groundAt(this.level, blue.x);
     }
 
@@ -2151,7 +2208,8 @@ export class Game {
         style: boss.style,
         scale: boss.scale,
         flare: boss.flash > 0 ? 1.65
-          : (isBlue && boss.lungeT > 0 ? 1.35 : isBlue && boss.windupT > 0 ? 1.24 : 0.92),
+          : (isBlue && (boss.lungeT > 0 || boss.storm) ? 1.35
+            : isBlue && boss.windupT > 0 ? 1.24 : 0.92),
         facing: -1,
       });
       if (boss.flash > 0) {
@@ -2178,6 +2236,40 @@ export class Game {
           g.stroke();
           g.fillStyle = 'rgba(185,215,255,0.5)';
           g.fillRect(Math.round(mx), Math.round(my) - 26, 1, 22);
+          g.restore();
+        }
+      }
+      // The storm's marks: a ring tightening on the ground, then the bolt.
+      if (isBlue && boss.storm) {
+        g.save();
+        g.globalCompositeOperation = 'lighter';
+        g.globalAlpha = 0.3 + Math.sin(this.time * 14) * 0.12;
+        glow(g, sx, groundAt(L, boss.x) - 30, 30, '#9fc8ff', 0.45);
+        g.restore();
+        for (const mark of boss.storm.marks) {
+          const mx = mark.x - this.cam.x;
+          const my = groundAt(L, mark.x) - 2;
+          if (mx < -40 || mx > W + 40) continue;
+          const k = clamp(1 - mark.w / 0.55, 0, 1);
+          g.save();
+          g.globalCompositeOperation = 'lighter';
+          if (k > 0.68) {
+            const boltA = (k - 0.68) / 0.32;
+            const jag = Math.round((Math.random() - 0.5) * 6);
+            g.globalAlpha = boltA * 0.9;
+            g.fillStyle = '#dff1ff';
+            g.fillRect(Math.round(mx), Math.round(my) - 130, 2, 130);
+            g.fillRect(Math.round(mx) + jag, Math.round(my) - 96, 1, 96);
+            glow(g, mx, my, 30, '#b9d7ff', 0.75 * boltA);
+          } else {
+            g.globalAlpha = 0.35 + k * 0.5;
+            glow(g, mx, my - 6, 12 + k * 16, '#6fa8ff', 0.5);
+            g.strokeStyle = '#b9d7ff';
+            g.lineWidth = 1;
+            g.beginPath();
+            g.ellipse(mx, my, 22 - k * 3, 4, 0, 0, TAU);
+            g.stroke();
+          }
           g.restore();
         }
       }
@@ -2498,7 +2590,9 @@ export class Game {
     g.fillStyle = 'rgba(3,4,10,0.68)';
     g.fillRect(48, 4, W - 96, 39);
     const blueBoss = battle.bosses.find((boss) => boss.kind === 'blue');
-    const heading = blueBoss && blueBoss.alive ? 'BLUE DUEL  /  BROWN HEAVY' : 'THE HEAVY ONE';
+    const heading = blueBoss && blueBoss.alive
+      ? (blueBoss.storm ? 'BLUE STORM  /  BROWN HEAVY' : 'BLUE DUEL  /  BROWN HEAVY')
+      : 'THE HEAVY ONE';
     drawText(g, heading, W / 2, 7, {
       align: 'center', color: '#e9edf6', scale: 1, spacing: 2, shadow: '#000000',
     });
@@ -2556,9 +2650,15 @@ export class Game {
       const laserText = battle.laserActive
         ? (battle.brownEngaged ? 'GUARDIANS: HEAVY BEAM' : 'GUARDIANS: CHARGING')
         : 'HOLD C  KNIGHTS\' WIDE LASER';
+      const storming = blueBoss && blueBoss.alive && blueBoss.storm;
       const marked = blueBoss && blueBoss.alive && blueBoss.windupT > 0;
-      drawText(g, marked ? 'STEP OUT OF THE MARK' : 'X  WHITE SHARDS', W / 2, H - 25, {
-        align: 'center', color: marked ? '#b9d7ff' : '#f2f0f7', scale: 1, spacing: 1, shadow: '#000000',
+      const hint = storming
+        ? 'KEEP MOVING - OUT OF THE MARKS'
+        : marked ? 'STEP OUT OF THE MARK' : 'X  WHITE SHARDS';
+      drawText(g, hint, W / 2, H - 25, {
+        align: 'center',
+        color: (storming || marked) ? '#b9d7ff' : '#f2f0f7',
+        scale: 1, spacing: 1, shadow: '#000000',
       });
       drawText(g, laserText, W / 2, H - 13, {
         align: 'center', color: battle.laserActive ? '#ffffff' : '#b8c7da', scale: 1, spacing: 1, shadow: '#000000',
