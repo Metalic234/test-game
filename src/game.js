@@ -122,6 +122,7 @@ export class Game {
     this.lookout = null;
     this.lookedOut = false;
     this.climbEpilogue = false;
+    this.voyage = null;
     this.bob = 0;
 
     this.cam = { x: 0, y: 0 };
@@ -191,6 +192,7 @@ export class Game {
     this.lookout = null;
     this.lookedOut = false;
     this.climbEpilogue = false;
+    this.voyage = null;
     this.audio.applyBiome(this.level.theme);
     this.showCard(this.level);
   }
@@ -271,8 +273,15 @@ export class Game {
       this.updateParticles(dt);
       this.ending.t += dt;
       if (this.ending.t > 3 && (this.input.pressed('restart') || this.input.pressed('interact'))) {
-        this.startGame();
+        if (this.ending.voyage) this.beginVoyage();
+        else this.startGame();
       }
+      return;
+    }
+
+    if (this.voyage) {
+      this.updateVoyage(dt);
+      this.updateParticles(dt);
       return;
     }
 
@@ -927,7 +936,7 @@ export class Game {
 
     // Blue has to survive long enough for the duel to be a duel. At 3 damage
     // per volley he needs a real pool, not a two-second formality.
-    const hp = [84, 0, 0, 132];
+    const hp = [84, 0, 0, 210];
     // The whole last street is the arena: one opponent at a time, and room to run.
     const arenaMin = Math.max(24, playerX - 110);
     const arenaMax = Math.min(this.level.width - 150, playerX + 380);
@@ -969,7 +978,6 @@ export class Game {
       hero: { hp: 100, max: 100, hurt: 0 },
       heroDown: false,
       shards: [],
-      shardCooldown: 0,
       laserActive: false,
       laserDamageT: 0,
       defeated: 0,
@@ -998,9 +1006,9 @@ export class Game {
 
     const p = this.player;
     // The last street is the arena. One opponent, and enough room to leave a mark.
+    // She keeps her feet, her jump and her dash: the arena only limits distance.
     p.x = clamp(p.x, battle.arenaMin, battle.arenaMax);
-    p.y = groundAt(this.level, p.x);
-    p.onGround = true;
+    const airborne = p.y < groundAt(this.level, p.x) - 10;
 
     // Red and yellow choose to run rather than fight. They are no longer targets.
     for (const boss of battle.bosses) {
@@ -1107,7 +1115,7 @@ export class Game {
             const markX = blue.strikeX;
             const inMark = Math.abs(p.x - markX) < 24;
             const inReach = Math.abs(blue.x - p.x) < 44;
-            if (inMark && inReach && battle.hero.hp > 0) {
+            if (inMark && inReach && !airborne && battle.hero.hp > 0) {
               battle.hero.hp = Math.max(0, battle.hero.hp - 11);
               battle.hero.hurt = 1;
               this.audio.play('whisper');
@@ -1157,9 +1165,9 @@ export class Game {
           brown.slamPending = false;
           brown.stompT = 0.65;
           const markX = brown.slamX;
-          const hit = Math.abs(p.x - markX) < 40 && battle.hero.hp > 0;
+          const hit = Math.abs(p.x - markX) < 44 && !airborne && battle.hero.hp > 0;
           if (hit) {
-            battle.hero.hp = Math.max(0, battle.hero.hp - 16);
+            battle.hero.hp = Math.max(0, battle.hero.hp - 17);
             battle.hero.hurt = 1;
             this.audio.play('whisper');
             for (let i = 0; i < 14; i++) {
@@ -1190,7 +1198,7 @@ export class Game {
               drag: 0.94,
             });
           }
-          brown.slamClock = 2.4 - 0.95 * fury;
+          brown.slamClock = 2.3 - fury;
           brown.slamRecover = 0.5;
         }
       } else if (brown.slamRecover <= 0) {
@@ -1213,12 +1221,8 @@ export class Game {
 
     battle.hero.hurt = Math.max(0, battle.hero.hurt - dt * 2.2);
 
-    battle.shardCooldown = Math.max(0, battle.shardCooldown - dt);
-    if (this.input.consume('shard') && battle.shardCooldown <= 0) {
-      this.throwWhiteShards();
-      // The duel is fought volley by volley; once Blue falls, she can pour it on.
-      battle.shardCooldown = blue && blue.alive ? 0.4 : 0.24;
-    }
+    // Every press throws a volley, in either phase, with no wait between them.
+    if (this.input.consume('shard')) this.throwWhiteShards();
 
     const laserNow = this.input.down('laser');
     if (laserNow && !battle.laserActive) {
@@ -1228,9 +1232,9 @@ export class Game {
     battle.laserActive = laserNow;
     if (laserNow) {
       battle.laserDamageT += dt;
-      // The guardians' combined beam is reserved for the heavy brown boss.
-      while (battle.laserDamageT >= 0.22) {
-        battle.laserDamageT -= 0.22;
+      // The beam is on call in both phases; the knights never sit this one out.
+      while (battle.laserDamageT >= 0.1) {
+        battle.laserDamageT -= 0.1;
         this.damageWithGuardianLaser();
       }
     } else {
@@ -1314,13 +1318,15 @@ export class Game {
 
   damageWithGuardianLaser() {
     const battle = this.bossBattle;
-    if (!battle || !battle.brownEngaged || !battle.guardiansReady) return;
-    const brown = battle.bosses.find((boss) => boss.kind === 'brown' && boss.alive);
-    if (!brown) return;
+    if (!battle) return;
+    // The knights' beam answers at any point in the fight, and it hits like a train.
+    const target = battle.bosses.find((boss) => boss.alive && !boss.fleeing
+      && (battle.brownEngaged ? boss.kind === 'brown' : boss.kind === 'blue'));
+    if (!target) return;
     const beamY = groundAt(this.level, this.player.x) - 40;
-    const bossY = groundAt(this.level, brown.x) - 22;
-    if (Math.abs(bossY - beamY) <= 36) {
-      this.damageBoss(brown, 1, brown.x - 8, bossY);
+    const bossY = groundAt(this.level, target.x) - 22;
+    if (Math.abs(bossY - beamY) <= 44) {
+      this.damageBoss(target, 6, target.x - 8, bossY);
     }
   }
 
@@ -1566,6 +1572,8 @@ export class Game {
     this.ending = {
       name: 'A SHIP OUT',
       continued: false,
+      voyage: true,
+      prompt: 'PRESS E TO SAIL ON',
       lines: [
         'THE GANGPLANK HOLDS HER WEIGHT ALL THE WAY UP.',
         'THE PORT CLOSES ITS LAMPS BEHIND HER, ONE BY ONE.',
@@ -1581,6 +1589,255 @@ export class Game {
     // The last song is the same one the mountain heard: heavy, and hers.
     this.audio.applyBiome('metal');
     this.audio.play('ending');
+  }
+
+  // The water after the port. Islands, then a coast no map has ever agreed on.
+  beginVoyage() {
+    this.ending = null;
+    this.mode = 'play';
+    this.voyage = { t: 0 };
+    this.fade = 1;
+    this.fadeTarget = 0;
+    this.audio.play('transition');
+  }
+
+  updateVoyage(dt) {
+    const v = this.voyage;
+    v.t += dt;
+    if (v.t > 2 && this.input.pressed('restart')) {
+      this.voyage = null;
+      this.startGame();
+      return;
+    }
+    if (v.t > 25 && this.input.consume('interact')) {
+      this.voyage = null;
+      this.startGame();
+    }
+  }
+
+  drawVoyage(g) {
+    const t = this.voyage.t;
+    const land = clamp((t - 11) / 9, 0, 1);
+    // night, open water, and the far edge of the map
+    vgrad(g, 0, 0, W, H, [
+      [0, '#03050c'], [0.34, '#081321'], [0.55, '#13283a'], [0.615, '#22404f'], [1, '#050b12'],
+    ], 2);
+
+    for (let i = 0; i < 80; i++) {
+      const x = hash1(i * 3.1 + 0.7) * W;
+      const y = hash1(i * 7.3 + 1.9) * 132;
+      const a = 0.18 + hash1(i * 2.7) * 0.55;
+      g.fillStyle = `rgba(220,236,255,${a})`;
+      g.fillRect(Math.round(x), Math.round(y), 1, 1);
+    }
+    g.save();
+    g.globalCompositeOperation = 'lighter';
+    glow(g, W * 0.79, 42, 46, '#cfe4ff', 0.3);
+    g.restore();
+    g.fillStyle = '#e6f0fb';
+    g.beginPath();
+    g.arc(W * 0.79, 42, 11, 0, TAU);
+    g.fill();
+
+    const horizon = 156;
+    // islands going by: the only land for days
+    g.save();
+    g.globalAlpha = 1 - land * 0.9;
+    for (let i = 0; i < 5; i++) {
+      const x = W + 90 - ((t * (14 + i * 2) + i * 118) % (W + 260));
+      const s = 0.55 + hash1(i * 5.9) * 0.9;
+      const w = 54 * s;
+      const h = 20 * s;
+      g.fillStyle = '#0a121b';
+      g.beginPath();
+      g.moveTo(x - w / 2, horizon + 2);
+      g.quadraticCurveTo(x, horizon - h * 1.7, x + w / 2, horizon + 2);
+      g.closePath();
+      g.fill();
+      if (hash1(i * 8.3) > 0.45) {
+        g.fillStyle = 'rgba(255,190,110,0.75)';
+        g.fillRect(Math.round(x), Math.round(horizon - h * 0.5), 1, 1);
+        g.fillRect(Math.round(x) + 2, Math.round(horizon - h * 0.5), 1, 1);
+      }
+    }
+    g.restore();
+
+    vgrad(g, 0, horizon, W, H - horizon, [
+      [0, '#0d1c29'], [0.45, '#091520'], [1, '#04080d'],
+    ], 2);
+    g.save();
+    g.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < 14; i++) {
+      const y = horizon + 4 + i * 6;
+      const w = 26 - i * 1.3 + Math.sin(t * 1.7 + i) * 5;
+      g.globalAlpha = Math.max(0.02, 0.11 - i * 0.006);
+      g.fillStyle = '#cfe4ff';
+      g.fillRect(Math.round(W * 0.79 - w / 2), y, Math.max(1, Math.round(w)), 1);
+    }
+    g.restore();
+
+    // the mainland: first a line, then a coast, then a wall of old stone
+    if (land > 0.01) {
+      const x0 = W - land * (W * 0.8);
+      const peak = 170 - land * 126;
+      g.save();
+      g.globalAlpha = clamp(land * 2.2, 0, 1);
+      g.fillStyle = '#0b1620';
+      g.beginPath();
+      g.moveTo(W, H);
+      g.lineTo(W, peak + 54);
+      for (let i = 0; i <= 12; i++) {
+        const x = W - (i / 12) * (W - x0 + 30);
+        const h = peak + 30 + hash1(i * 4.1 + 3.3) * 38 + i * 2.2;
+        g.lineTo(x, h);
+      }
+      g.lineTo(x0 - 20, H);
+      g.closePath();
+      g.fill();
+
+      g.fillStyle = '#070f16';
+      g.beginPath();
+      g.moveTo(W, H);
+      g.lineTo(W, peak + 78);
+      for (let i = 0; i <= 9; i++) {
+        const x = W - (i / 9) * (W - x0 - 30);
+        g.lineTo(x, peak + 70 + hash1(i * 6.7 + 9.1) * 32);
+      }
+      g.lineTo(x0 - 60, H);
+      g.closePath();
+      g.fill();
+      g.restore();
+
+      // ruins on the headland: nobody has kept these lights for a long time
+      if (land > 0.3) {
+        g.save();
+        g.globalAlpha = clamp((land - 0.3) / 0.5, 0, 1);
+        for (let i = 0; i < 4; i++) {
+          const bx = W - 68 - i * 54 - land * 26;
+          const bh = 26 + hash1(i * 2.3 + 4.4) * 42;
+          const by = peak + 44;
+          g.fillStyle = '#060c12';
+          g.fillRect(Math.round(bx), Math.round(by - bh), 9, Math.round(bh));
+          g.fillRect(Math.round(bx) - 4, Math.round(by - bh), 17, 3);
+          g.fillRect(Math.round(bx) + 2, Math.round(by - bh - 8), 5, 9);
+          g.fillStyle = 'rgba(255,178,92,0.6)';
+          g.fillRect(Math.round(bx) + 3, Math.round(by - bh + 10), 1, 1);
+          if (i === 1) g.fillRect(Math.round(bx) + 5, Math.round(by - bh + 19), 1, 1);
+        }
+        g.restore();
+      }
+
+      g.save();
+      g.globalCompositeOperation = 'lighter';
+      g.globalAlpha = 0.5;
+      const mg = g.createLinearGradient(0, horizon - 24, 0, horizon + 26);
+      mg.addColorStop(0, 'rgba(150,185,210,0)');
+      mg.addColorStop(0.55, 'rgba(150,185,210,0.09)');
+      mg.addColorStop(1, 'rgba(150,185,210,0)');
+      g.fillStyle = mg;
+      g.fillRect(0, horizon - 24, W, 50);
+      g.restore();
+    }
+
+    // the ship, still moving, and the girl on its deck
+    const sx = W * 0.29 + land * 34;
+    const sy = horizon + 36 + Math.sin(t * 1.5) * 2;
+    g.save();
+    g.translate(Math.round(sx), Math.round(sy));
+    g.strokeStyle = 'rgba(190,215,235,0.2)';
+    g.lineWidth = 1;
+    g.beginPath();
+    g.moveTo(-18, 9);
+    g.lineTo(-52, 12);
+    g.moveTo(-14, 12);
+    g.lineTo(-38, 16);
+    g.stroke();
+    g.fillStyle = '#090d13';
+    g.beginPath();
+    g.moveTo(-22, 0);
+    g.lineTo(23, 0);
+    g.lineTo(17, 9);
+    g.lineTo(-15, 9);
+    g.closePath();
+    g.fill();
+    g.fillStyle = '#0d131b';
+    g.fillRect(2, -46, 2, 46);
+    g.fillStyle = 'rgba(210,224,238,0.2)';
+    g.beginPath();
+    g.moveTo(5, -44);
+    g.lineTo(31, -12);
+    g.lineTo(5, -9);
+    g.closePath();
+    g.fill();
+    g.strokeStyle = 'rgba(210,224,238,0.12)';
+    g.beginPath();
+    g.moveTo(6, -40);
+    g.lineTo(25, -14);
+    g.stroke();
+    g.save();
+    g.globalCompositeOperation = 'lighter';
+    glow(g, -12, -8, 9, '#ffbe78', 0.5);
+    g.restore();
+    g.fillStyle = '#ffcf94';
+    g.fillRect(-12, -9, 2, 2);
+    g.drawImage(GIRL.idle[0], -5, -25);
+    g.restore();
+
+    drawText(g, 'THE LONG WAY OUT', W / 2, 12, {
+      align: 'center', color: 'rgba(190,204,222,0.55)', scale: 1, spacing: 3,
+    });
+
+    const lines = [
+      [0.8, 'THE SHIP TAKES THE LONG WAY OUT.'],
+      [4.4, 'ISLANDS PASS IN THE DARK, ONE AFTER ANOTHER.'],
+      [8.0, 'SOME ARE LIT. SOME ARE ONLY SHAPES.'],
+      [11.6, 'THE WATER WIDENS UNTIL THERE IS NOTHING LEFT TO PASS.'],
+      [15.2, 'ON THE LAST MORNING, THE HORIZON STOPS MOVING.'],
+      [18.8, 'A MAINLAND. OLD ENOUGH TO HAVE FORGOTTEN ITS NAME.'],
+      [22.4, 'SHE STEPS OFF THE GANGPLANK. THE STORY LETS GO OF HER.'],
+    ];
+    let line = null;
+    let since = 0;
+    for (const [at, text] of lines) {
+      if (t >= at) { line = text; since = t - at; }
+    }
+    g.save();
+    const band = g.createLinearGradient(0, H - 66, 0, H);
+    band.addColorStop(0, 'rgba(3,5,9,0)');
+    band.addColorStop(0.55, 'rgba(3,5,9,0.66)');
+    band.addColorStop(1, 'rgba(3,5,9,0.9)');
+    g.fillStyle = band;
+    g.fillRect(0, H - 66, W, 66);
+    g.restore();
+
+    if (t < 25.6 && line) {
+      g.save();
+      g.globalAlpha = clamp(since / 0.9, 0, 1) * 0.96;
+      const wrapped = wrapText(line, 420, 1, 1);
+      let y = H - 40 - (wrapped.length - 1) * 12;
+      for (const part of wrapped) {
+        drawText(g, part, W / 2, y, {
+          align: 'center', color: '#ddd6cf', scale: 1, spacing: 1, shadow: '#000000',
+        });
+        y += 13;
+      }
+      g.restore();
+    } else if (t >= 25.6) {
+      g.save();
+      g.globalAlpha = clamp((t - 25.6) / 1.2, 0, 1);
+      drawText(g, 'THE MAINLAND', W / 2, H - 50, {
+        align: 'center', color: '#efe6d8', scale: 2, spacing: 3, shadow: '#000000',
+      });
+      drawText(g, 'THE END', W / 2, H - 30, {
+        align: 'center', color: '#c8a86e', scale: 1, spacing: 5, shadow: '#000000',
+      });
+      const blink = 0.35 + 0.65 * Math.abs(Math.sin(this.time * 1.8));
+      g.globalAlpha *= blink;
+      drawText(g, 'R  WALK AGAIN', W / 2, H - 14, {
+        align: 'center', color: '#9c93a6', scale: 1, spacing: 2,
+      });
+      g.restore();
+    }
   }
 
   showHeroDown() {
@@ -2036,6 +2293,12 @@ export class Game {
     g.globalAlpha = 1;
     g.globalCompositeOperation = 'source-over';
 
+    if (this.voyage) {
+      this.drawVoyage(g);
+      this.drawOverlays(g);
+      return;
+    }
+
     if (this.mode === 'ending') {
       this.drawEnding(g);
       this.drawOverlays(g);
@@ -2248,8 +2511,8 @@ export class Game {
     const battle = this.bossBattle;
     const L = this.level;
 
-    // The knights' beam reaches past the girl toward the heavy brown boss.
-    if (battle.laserActive && battle.brownEngaged) this.drawGuardianLaser(g);
+    // The knights' beam reaches past the girl toward whoever she is fighting.
+    if (battle.laserActive) this.drawGuardianLaser(g);
 
     // And then, once he is down, the two of them finish it together.
     if (battle.finish) this.drawBrownFinish(g);
@@ -2363,16 +2626,16 @@ export class Game {
           g.save();
           g.globalCompositeOperation = 'lighter';
           g.globalAlpha = 0.3 + k * 0.5;
-          glow(g, mx, my - 8, 22 + k * 32, '#d6a06a', 0.5);
+          glow(g, mx, my - 8, 24 + k * 34, '#d6a06a', 0.5);
           g.strokeStyle = '#f0c396';
           g.lineWidth = 2;
           g.beginPath();
-          g.ellipse(mx, my, 40 - k * 8, 6, 0, 0, TAU);
+          g.ellipse(mx, my, 44 - k * 8, 6, 0, 0, TAU);
           g.stroke();
           g.strokeStyle = 'rgba(240,195,150,0.55)';
           g.lineWidth = 1;
           g.beginPath();
-          g.ellipse(mx, my, 25 - k * 5, 4, 0, 0, TAU);
+          g.ellipse(mx, my, 28 - k * 5, 4, 0, 0, TAU);
           g.stroke();
           g.fillStyle = 'rgba(240,195,150,0.4)';
           g.fillRect(Math.round(mx), Math.round(my) - 58 + k * 20, 1, 36);
@@ -2458,8 +2721,9 @@ export class Game {
     const battle = this.bossBattle;
     const L = this.level;
     const sx = Math.min(...battle.guardianXs) - this.cam.x + 8;
-    const brown = battle.bosses.find((boss) => boss.kind === 'brown');
-    const endWorld = brown ? brown.x + 34 : battle.playerX + 180;
+    const target = battle.bosses.find((boss) => boss.alive && !boss.fleeing
+      && (battle.brownEngaged ? boss.kind === 'brown' : boss.kind === 'blue'));
+    const endWorld = target ? target.x + 34 : battle.playerX + 220;
     const ex = Math.min(W + 20, endWorld - this.cam.x);
     const beamY = groundAt(L, this.player.x) - 40;
     const width = Math.max(0, ex - sx);
@@ -2469,25 +2733,29 @@ export class Game {
     g.save();
     g.globalCompositeOperation = 'lighter';
     // Wide atmospheric bloom, broad white body, then a sharp central core.
-    g.globalAlpha = 0.42 * pulse;
+    g.globalAlpha = 0.46 * pulse;
     g.fillStyle = '#c9e8ff';
-    g.fillRect(sx, beamY - 26, width, 52);
-    glow(g, sx + width * 0.55, beamY, Math.min(150, width * 0.62), '#d9f0ff', 0.55);
-    g.globalAlpha = 0.72;
+    g.fillRect(sx, beamY - 32, width, 64);
+    glow(g, sx + width * 0.55, beamY, Math.min(170, width * 0.7), '#d9f0ff', 0.62);
+    g.globalAlpha = 0.78;
     g.fillStyle = '#eaf7ff';
-    g.fillRect(sx, beamY - 16, width, 32);
-    g.globalAlpha = 0.94;
+    g.fillRect(sx, beamY - 20, width, 40);
+    g.globalAlpha = 0.96;
     g.fillStyle = '#ffffff';
-    g.fillRect(sx, beamY - 7, width, 14);
-    g.globalAlpha = 0.8;
+    g.fillRect(sx, beamY - 10, width, 20);
+    g.globalAlpha = 0.86;
     g.fillStyle = '#ffffff';
-    g.fillRect(sx, beamY - 2, width, 4);
+    g.fillRect(sx, beamY - 3, width, 6);
+    if (target) {
+      const tx = target.x - this.cam.x;
+      if (tx > sx) glow(g, tx, beamY, 36, '#ffffff', 0.6);
+    }
     // Two bright mouths make it clear that both knights are powering it.
     for (const gx of battle.guardianXs) {
       const x = gx - this.cam.x + 10;
-      glow(g, x, beamY, 27, '#ffffff', 0.92);
+      glow(g, x, beamY, 32, '#ffffff', 0.98);
       g.fillStyle = '#ffffff';
-      g.fillRect(Math.round(x - 2), Math.round(beamY - 13), 7, 26);
+      g.fillRect(Math.round(x - 3), Math.round(beamY - 16), 9, 32);
     }
     // A few moving pinpoints give the beam a sense of forward force.
     for (let i = 0; i < 12; i++) {
@@ -2756,17 +3024,17 @@ export class Game {
         align: 'center', color: f.fired ? '#ffffff' : '#c8d4e6', scale: 1, spacing: 1, shadow: '#000000',
       });
     } else {
-      const laserText = battle.brownEngaged
-        ? (battle.laserActive ? 'GUARDIANS: HEAVY BEAM' : 'HOLD C  KNIGHTS\' WIDE LASER')
-        : 'THE KNIGHTS HOLD THE STREET';
+      const laserText = battle.laserActive
+        ? 'GUARDIANS: HEAVY BEAM'
+        : 'HOLD C  KNIGHTS\' BEAM';
       const storming = blueAlive && blueBoss.storm;
       const marked = blueAlive && blueBoss.windupT > 0;
       const bracing = brownAlive && brownBoss.slamT > 0;
       const hint = storming
         ? 'KEEP MOVING - OUT OF THE MARKS'
-        : marked ? 'STEP OUT OF THE MARK'
-          : bracing ? 'CLEAR THE MARK'
-            : (blueAlive ? 'X  WHITE SHARDS' : 'X  SHARDS    HOLD C  BEAM');
+        : marked ? 'JUMP OR STEP OUT OF THE MARK'
+          : bracing ? 'JUMP OR CLEAR THE MARK'
+            : 'W JUMP   SHIFT DASH   X SHARDS   C BEAM';
       drawText(g, hint, W / 2, H - 25, {
         align: 'center',
         color: (storming || marked) ? '#b9d7ff' : bracing ? '#f0c396' : '#f2f0f7',
@@ -2979,7 +3247,7 @@ export class Game {
       if (t > 6) {
         const blink = 0.35 + 0.65 * Math.abs(Math.sin(this.time * 1.8));
         g.globalAlpha = sa * blink;
-        drawText(g, 'PRESS R TO WALK AGAIN', W / 2, 262, { align: 'center', color: '#d8d0e2', scale: 1, spacing: 2 });
+        drawText(g, this.ending.prompt || 'PRESS R TO WALK AGAIN', W / 2, 262, { align: 'center', color: '#d8d0e2', scale: 1, spacing: 2 });
       }
       g.restore();
     }
