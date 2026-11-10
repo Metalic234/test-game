@@ -273,8 +273,7 @@ export class Game {
       this.updateParticles(dt);
       this.ending.t += dt;
       if (this.ending.t > 3 && (this.input.pressed('restart') || this.input.pressed('interact'))) {
-        if (this.ending.voyage) this.beginVoyage();
-        else this.startGame();
+        this.startGame();
       }
       return;
     }
@@ -351,7 +350,7 @@ export class Game {
       // The last street does not lead anywhere: it leads to them.
       if (this.level.finale) this.beginFinale();
       else if (this.levelIndex < LEVEL_COUNT - 1) this.beginTransition();
-      else if (this.level.ship) this.showShipEnding();
+      else if (this.level.ship) this.beginVoyage();
       else this.beginFinale();
     }
   }
@@ -1565,32 +1564,6 @@ export class Game {
     this.audio.play('power');
   }
 
-  // The deck under her feet and the water under that. The ship takes her the rest of the way.
-  showShipEnding() {
-    if (this.mode === 'ending') return;
-    this.mode = 'ending';
-    this.ending = {
-      name: 'A SHIP OUT',
-      continued: false,
-      voyage: true,
-      prompt: 'PRESS E TO SAIL ON',
-      lines: [
-        'THE GANGPLANK HOLDS HER WEIGHT ALL THE WAY UP.',
-        'THE PORT CLOSES ITS LAMPS BEHIND HER, ONE BY ONE.',
-        'THE TWO SHADOWS COME UP AFTER HER AND STAND AT THE RAIL.',
-        'THE SHIP TURNS ITS FACE TO THE BLACK WATER, AND LEAVES.',
-      ],
-      count: this.found.size,
-      powers: this.powers.size,
-      t: 0,
-    };
-    this.fade = 1;
-    this.fadeTarget = 0;
-    // The last song is the same one the mountain heard: heavy, and hers.
-    this.audio.applyBiome('metal');
-    this.audio.play('ending');
-  }
-
   // The water after the port. Islands, then a coast no map has ever agreed on.
   beginVoyage() {
     this.ending = null;
@@ -1598,6 +1571,7 @@ export class Game {
     this.voyage = { t: 0 };
     this.fade = 1;
     this.fadeTarget = 0;
+    this.audio.applyBiome('metal');
     this.audio.play('transition');
   }
 
@@ -1615,174 +1589,390 @@ export class Game {
     }
   }
 
+  drawVoyageIsland(g, x, y, s, i) {
+    g.save();
+    g.translate(Math.round(x), Math.round(y));
+    g.scale(s, s);
+
+    // surf breaking around a shape that is mostly rock
+    g.strokeStyle = 'rgba(160,200,214,0.18)';
+    g.lineWidth = 2;
+    g.beginPath();
+    for (let k = 0; k <= 10; k++) {
+      const a = (k / 10) * TAU;
+      const r = 26 + hash1(i * 7.1 + k * 1.9) * 10;
+      const px = Math.cos(a) * r;
+      const py = Math.sin(a) * r * 0.58;
+      if (k === 0) g.moveTo(px, py);
+      else g.lineTo(px, py);
+    }
+    g.closePath();
+    g.stroke();
+
+    g.fillStyle = '#0a1517';
+    g.beginPath();
+    for (let k = 0; k <= 12; k++) {
+      const a = (k / 12) * TAU;
+      const r = 20 + hash1(i * 3.3 + k * 2.7) * 9;
+      const px = Math.cos(a) * r;
+      const py = Math.sin(a) * r * 0.56;
+      if (k === 0) g.moveTo(px, py);
+      else g.lineTo(px, py);
+    }
+    g.closePath();
+    g.fill();
+
+    // canopy, from directly above
+    g.fillStyle = '#0e201d';
+    g.beginPath();
+    g.arc(-3, -2, 10 + hash1(i * 9.1) * 4, 0, TAU);
+    g.fill();
+    g.beginPath();
+    g.arc(6, 3, 7 + hash1(i * 4.4) * 3, 0, TAU);
+    g.fill();
+
+    // palms are only stars of shadow at this height
+    g.strokeStyle = '#071011';
+    g.lineWidth = 1;
+    for (let k = 0; k < 4; k++) {
+      const px = -12 + hash1(i * 4.4 + k * 6.2) * 24;
+      const py = -7 + hash1(i * 8.8 + k * 3.1) * 12;
+      for (let f = 0; f < 5; f++) {
+        const a = (f / 5) * TAU + 0.4;
+        g.beginPath();
+        g.moveTo(px, py);
+        g.lineTo(px + Math.cos(a) * 4, py + Math.sin(a) * 2.6);
+        g.stroke();
+      }
+    }
+
+    if (hash1(i * 2.9) > 0.32) {
+      g.fillStyle = 'rgba(255,186,104,0.8)';
+      g.fillRect(-8 + Math.round(hash1(i * 5.5) * 14), -3, 1, 1);
+      g.fillRect(-6 + Math.round(hash1(i * 5.5) * 14), -1, 1, 1);
+    }
+    g.restore();
+  }
+
   drawVoyage(g) {
     const t = this.voyage.t;
     const land = clamp((t - 11) / 9, 0, 1);
-    // night, open water, and the far edge of the map
+    const sea = t * 15;
+
+    // From above there is no horizon: only water, and whatever is moving on it.
     vgrad(g, 0, 0, W, H, [
-      [0, '#03050c'], [0.34, '#081321'], [0.55, '#13283a'], [0.615, '#22404f'], [1, '#050b12'],
+      [0, '#061520'], [0.42, '#0a202c'], [0.78, '#071722'], [1, '#030a10'],
     ], 2);
 
-    for (let i = 0; i < 80; i++) {
-      const x = hash1(i * 3.1 + 0.7) * W;
-      const y = hash1(i * 7.3 + 1.9) * 132;
-      const a = 0.18 + hash1(i * 2.7) * 0.55;
-      g.fillStyle = `rgba(220,236,255,${a})`;
-      g.fillRect(Math.round(x), Math.round(y), 1, 1);
-    }
     g.save();
-    g.globalCompositeOperation = 'lighter';
-    glow(g, W * 0.79, 42, 46, '#cfe4ff', 0.3);
-    g.restore();
-    g.fillStyle = '#e6f0fb';
-    g.beginPath();
-    g.arc(W * 0.79, 42, 11, 0, TAU);
-    g.fill();
-
-    const horizon = 156;
-    // islands going by: the only land for days
-    g.save();
-    g.globalAlpha = 1 - land * 0.9;
-    for (let i = 0; i < 5; i++) {
-      const x = W + 90 - ((t * (14 + i * 2) + i * 118) % (W + 260));
-      const s = 0.55 + hash1(i * 5.9) * 0.9;
-      const w = 54 * s;
-      const h = 20 * s;
-      g.fillStyle = '#0a121b';
+    g.globalAlpha = 0.13;
+    g.strokeStyle = '#a9cfdd';
+    g.lineWidth = 1;
+    for (let i = 0; i < 22; i++) {
+      const y = ((i * 19 + sea * 0.8) % (H + 30)) - 15;
+      const x = ((hash1(i * 4.7) * (W + 120) + Math.sin(t * 0.5 + i) * 24) % (W + 80)) - 40;
       g.beginPath();
-      g.moveTo(x - w / 2, horizon + 2);
-      g.quadraticCurveTo(x, horizon - h * 1.7, x + w / 2, horizon + 2);
-      g.closePath();
-      g.fill();
-      if (hash1(i * 8.3) > 0.45) {
-        g.fillStyle = 'rgba(255,190,110,0.75)';
-        g.fillRect(Math.round(x), Math.round(horizon - h * 0.5), 1, 1);
-        g.fillRect(Math.round(x) + 2, Math.round(horizon - h * 0.5), 1, 1);
-      }
+      g.moveTo(x, y);
+      g.quadraticCurveTo(x + 20, y - 2.5, x + 42, y);
+      g.stroke();
     }
     g.restore();
 
-    vgrad(g, 0, horizon, W, H - horizon, [
-      [0, '#0d1c29'], [0.45, '#091520'], [1, '#04080d'],
-    ], 2);
+    // Moonlight, flat on the water to the north-east.
     g.save();
     g.globalCompositeOperation = 'lighter';
-    for (let i = 0; i < 14; i++) {
-      const y = horizon + 4 + i * 6;
-      const w = 26 - i * 1.3 + Math.sin(t * 1.7 + i) * 5;
-      g.globalAlpha = Math.max(0.02, 0.11 - i * 0.006);
-      g.fillStyle = '#cfe4ff';
-      g.fillRect(Math.round(W * 0.79 - w / 2), y, Math.max(1, Math.round(w)), 1);
+    glow(g, W * 0.78, 36, 120, '#9fc7dd', 0.1);
+    for (let i = 0; i < 16; i++) {
+      const x = W * 0.78 + Math.sin(i * 2.3 + t * 0.7) * (12 + i * 2.6);
+      const y = 14 + i * 4.2;
+      g.globalAlpha = 0.12 - i * 0.005;
+      g.fillStyle = '#d7ecf6';
+      g.fillRect(Math.round(x), Math.round(y), 3 + (i % 3) * 2, 1);
     }
     g.restore();
 
-    // the mainland: first a line, then a coast, then a wall of old stone
-    if (land > 0.01) {
-      const x0 = W - land * (W * 0.8);
-      const peak = 170 - land * 126;
+    // Islands go down both sides of the frame as she goes north.
+    const islandFade = 1 - land * 0.92;
+    for (let i = 0; i < 7; i++) {
+      const side = i % 2 === 0 ? -1 : 1;
+      const speed = 13 + (i % 3) * 4;
+      const y = ((t * speed + i * 83) % (H + 170)) - 85;
+      const x = W / 2 + side * (122 + hash1(i * 6.1) * 58);
+      const s = 0.75 + hash1(i * 3.7 + 1.2) * 0.55;
       g.save();
-      g.globalAlpha = clamp(land * 2.2, 0, 1);
-      g.fillStyle = '#0b1620';
-      g.beginPath();
-      g.moveTo(W, H);
-      g.lineTo(W, peak + 54);
-      for (let i = 0; i <= 12; i++) {
-        const x = W - (i / 12) * (W - x0 + 30);
-        const h = peak + 30 + hash1(i * 4.1 + 3.3) * 38 + i * 2.2;
-        g.lineTo(x, h);
-      }
-      g.lineTo(x0 - 20, H);
-      g.closePath();
-      g.fill();
+      g.globalAlpha = islandFade * (0.7 + hash1(i * 8.9) * 0.3);
+      this.drawVoyageIsland(g, x, y, s, i);
+      g.restore();
+    }
 
-      g.fillStyle = '#070f16';
+    // The mainland comes down from the top of the frame: a coast, not a horizon.
+    if (land > 0.01) {
+      const coast = -80 + land * 172;
+      g.save();
+      g.globalAlpha = clamp(land * 2.6, 0, 0.9);
+      g.strokeStyle = 'rgba(185,218,228,0.38)';
+      g.lineWidth = 2;
       g.beginPath();
-      g.moveTo(W, H);
-      g.lineTo(W, peak + 78);
-      for (let i = 0; i <= 9; i++) {
-        const x = W - (i / 9) * (W - x0 - 30);
-        g.lineTo(x, peak + 70 + hash1(i * 6.7 + 9.1) * 32);
+      for (let i = 0; i <= 16; i++) {
+        const x = (i / 16) * W;
+        const y = coast + Math.sin(i * 1.7 + 2.1) * 3 + hash1(i * 5.3) * 5;
+        if (i === 0) g.moveTo(x, y);
+        else g.lineTo(x, y);
       }
-      g.lineTo(x0 - 60, H);
-      g.closePath();
-      g.fill();
+      g.stroke();
       g.restore();
 
-      // ruins on the headland: nobody has kept these lights for a long time
-      if (land > 0.3) {
+      g.save();
+      const lg = g.createLinearGradient(0, 0, 0, Math.max(1, coast));
+      lg.addColorStop(0, '#070e12');
+      lg.addColorStop(0.7, '#0b1619');
+      lg.addColorStop(1, '#12211f');
+      g.fillStyle = lg;
+      g.beginPath();
+      g.moveTo(0, -10);
+      g.lineTo(W, -10);
+      g.lineTo(W, coast);
+      for (let i = 16; i >= 0; i--) {
+        const x = (i / 16) * W;
+        const y = coast + Math.sin(i * 1.7 + 2.1) * 3 + hash1(i * 5.3) * 5;
+        g.lineTo(x, y);
+      }
+      g.closePath();
+      g.fill();
+      g.globalAlpha = 0.25 * land;
+      g.strokeStyle = '#b9d8e2';
+      g.lineWidth = 1;
+      g.beginPath();
+      for (let i = 0; i <= 16; i++) {
+        const x = (i / 16) * W;
+        const y = coast + 4 + Math.sin(i * 1.7 + 2.1) * 3 + hash1(i * 5.3) * 5;
+        if (i === 0) g.moveTo(x, y);
+        else g.lineTo(x, y);
+      }
+      g.stroke();
+      g.restore();
+
+      if (coast > 34) {
         g.save();
-        g.globalAlpha = clamp((land - 0.3) / 0.5, 0, 1);
-        for (let i = 0; i < 4; i++) {
-          const bx = W - 68 - i * 54 - land * 26;
-          const bh = 26 + hash1(i * 2.3 + 4.4) * 42;
-          const by = peak + 44;
-          g.fillStyle = '#060c12';
-          g.fillRect(Math.round(bx), Math.round(by - bh), 9, Math.round(bh));
-          g.fillRect(Math.round(bx) - 4, Math.round(by - bh), 17, 3);
-          g.fillRect(Math.round(bx) + 2, Math.round(by - bh - 8), 5, 9);
-          g.fillStyle = 'rgba(255,178,92,0.6)';
-          g.fillRect(Math.round(bx) + 3, Math.round(by - bh + 10), 1, 1);
-          if (i === 1) g.fillRect(Math.round(bx) + 5, Math.round(by - bh + 19), 1, 1);
+        g.globalAlpha = clamp((coast - 34) / 50, 0, 1);
+        // forest cover, seen from above
+        g.fillStyle = 'rgba(12,26,22,0.8)';
+        for (let i = 0; i < 90; i++) {
+          const x = 8 + hash1(i * 2.3 + 8.8) * (W - 16);
+          const y = 6 + hash1(i * 7.7 + 3.1) * Math.max(4, coast - 18);
+          g.fillRect(Math.round(x), Math.round(y), 1, 1);
         }
+        // roads and broken sea walls
+        g.strokeStyle = 'rgba(86,104,102,0.45)';
+        g.lineWidth = 2;
+        g.beginPath();
+        g.moveTo(W * 0.18, coast - 10);
+        g.lineTo(W * 0.42, coast - 10);
+        g.moveTo(W * 0.58, coast - 10);
+        g.lineTo(W * 0.84, coast - 10);
+        g.stroke();
+        // roofless halls and towers from directly above
+        for (let i = 0; i < 9; i++) {
+          const bx = 42 + hash1(i * 3.1 + 7.7) * (W - 84);
+          const by = 16 + hash1(i * 6.9 + 2.2) * Math.max(6, coast - 42);
+          const bw = 9 + hash1(i * 8.1) * 14;
+          const bh = 7 + hash1(i * 2.7 + 5.1) * 10;
+          g.fillStyle = 'rgba(0,0,0,0.45)';
+          g.fillRect(Math.round(bx + 3), Math.round(by + 3), Math.round(bw), Math.round(bh));
+          g.fillStyle = '#0b1110';
+          g.fillRect(Math.round(bx), Math.round(by), Math.round(bw), Math.round(bh));
+          g.strokeStyle = 'rgba(94,110,104,0.35)';
+          g.lineWidth = 1;
+          g.strokeRect(Math.round(bx) + 0.5, Math.round(by) + 0.5, Math.round(bw) - 1, Math.round(bh) - 1);
+          if (hash1(i * 4.3) > 0.4) {
+            g.fillStyle = 'rgba(255,178,92,0.55)';
+            g.fillRect(Math.round(bx + bw / 2), Math.round(by + bh / 2), 1, 1);
+          }
+        }
+        // the quay she is making for
+        g.fillStyle = '#101716';
+        g.fillRect(Math.round(W * 0.54), Math.round(coast - 8), 30, 26);
+        g.fillStyle = '#1a2320';
+        g.fillRect(Math.round(W * 0.54), Math.round(coast - 8), 30, 4);
+        g.fillStyle = 'rgba(255,186,104,0.75)';
+        g.fillRect(Math.round(W * 0.54) + 4, Math.round(coast + 11), 1, 1);
+        g.fillRect(Math.round(W * 0.54) + 25, Math.round(coast + 11), 1, 1);
         g.restore();
       }
-
-      g.save();
-      g.globalCompositeOperation = 'lighter';
-      g.globalAlpha = 0.5;
-      const mg = g.createLinearGradient(0, horizon - 24, 0, horizon + 26);
-      mg.addColorStop(0, 'rgba(150,185,210,0)');
-      mg.addColorStop(0.55, 'rgba(150,185,210,0.09)');
-      mg.addColorStop(1, 'rgba(150,185,210,0)');
-      g.fillStyle = mg;
-      g.fillRect(0, horizon - 24, W, 50);
-      g.restore();
     }
 
-    // the ship, still moving, and the girl on its deck
-    const sx = W * 0.29 + land * 34;
-    const sy = horizon + 36 + Math.sin(t * 1.5) * 2;
+    // A ship, not a boat: three masts, a raised stern and a long wake.
+    const bob = Math.sin(t * 1.4) * 1.4;
+    const sway = Math.sin(t * 0.7) * 2.2;
+    const sx = W * 0.45 + land * 22 + sway;
+    const sy = H * 0.58 - land * 8 + bob;
     g.save();
     g.translate(Math.round(sx), Math.round(sy));
-    g.strokeStyle = 'rgba(190,215,235,0.2)';
+
+    // wake first, so the hull sits on top of its own water
+    g.save();
+    g.globalCompositeOperation = 'lighter';
+    g.strokeStyle = 'rgba(170,210,224,0.24)';
     g.lineWidth = 1;
     g.beginPath();
-    g.moveTo(-18, 9);
-    g.lineTo(-52, 12);
-    g.moveTo(-14, 12);
-    g.lineTo(-38, 16);
+    g.moveTo(-13, 44);
+    g.quadraticCurveTo(-24, 80, -36, 132);
+    g.moveTo(13, 44);
+    g.quadraticCurveTo(24, 80, 36, 132);
     g.stroke();
-    g.fillStyle = '#090d13';
+    for (let i = 0; i < 12; i++) {
+      const k = (t * 0.45 + i / 12) % 1;
+      const w = 10 + k * 26;
+      g.globalAlpha = (1 - k) * 0.24;
+      g.fillStyle = '#d5eaf2';
+      g.fillRect(Math.round(-w / 2 + Math.sin(i * 3.3) * 3), Math.round(48 + k * 76), 2, 2);
+    }
+    g.restore();
+    g.rotate(Math.sin(t * 0.9) * 0.015);
+
+    // bow wave
+    g.strokeStyle = 'rgba(190,220,230,0.2)';
+    g.lineWidth = 1;
     g.beginPath();
-    g.moveTo(-22, 0);
-    g.lineTo(23, 0);
-    g.lineTo(17, 9);
-    g.lineTo(-15, 9);
+    g.moveTo(0, -60);
+    g.quadraticCurveTo(-18, -52, -28, -34);
+    g.moveTo(0, -60);
+    g.quadraticCurveTo(18, -52, 28, -34);
+    g.stroke();
+
+    // hull
+    g.fillStyle = '#120e0b';
+    g.beginPath();
+    g.moveTo(0, -62);
+    g.quadraticCurveTo(25, -34, 23, 18);
+    g.lineTo(16, 48);
+    g.quadraticCurveTo(0, 54, -16, 48);
+    g.lineTo(-23, 18);
+    g.quadraticCurveTo(-25, -34, 0, -62);
     g.closePath();
     g.fill();
-    g.fillStyle = '#0d131b';
-    g.fillRect(2, -46, 2, 46);
-    g.fillStyle = 'rgba(210,224,238,0.2)';
+    g.strokeStyle = 'rgba(196,164,110,0.32)';
+    g.lineWidth = 1.5;
+    g.stroke();
+
+    // deck
+    g.fillStyle = '#2c2117';
     g.beginPath();
-    g.moveTo(5, -44);
-    g.lineTo(31, -12);
-    g.lineTo(5, -9);
+    g.moveTo(0, -54);
+    g.quadraticCurveTo(19, -30, 18, 17);
+    g.lineTo(12, 42);
+    g.quadraticCurveTo(0, 47, -12, 42);
+    g.lineTo(-18, 17);
+    g.quadraticCurveTo(-19, -30, 0, -54);
     g.closePath();
     g.fill();
-    g.strokeStyle = 'rgba(210,224,238,0.12)';
+    g.strokeStyle = 'rgba(120,88,54,0.35)';
+    g.lineWidth = 1;
+    for (let y = -44; y <= 38; y += 8) {
+      const w = 17 - Math.abs(y - 6) * 0.1;
+      g.beginPath();
+      g.moveTo(-w, y);
+      g.lineTo(w, y);
+      g.stroke();
+    }
+
+    // bowsprit and rigging
+    g.strokeStyle = '#1a140f';
+    g.lineWidth = 2;
     g.beginPath();
-    g.moveTo(6, -40);
-    g.lineTo(25, -14);
+    g.moveTo(0, -56);
+    g.lineTo(0, -76);
+    g.stroke();
+    g.strokeStyle = 'rgba(200,206,198,0.14)';
+    g.lineWidth = 1;
+    g.beginPath();
+    g.moveTo(0, -76);
+    g.lineTo(-21, -30);
+    g.moveTo(0, -76);
+    g.lineTo(21, -30);
+    g.moveTo(-21, -30);
+    g.lineTo(-19, 24);
+    g.moveTo(21, -30);
+    g.lineTo(19, 24);
+    g.moveTo(-19, 24);
+    g.lineTo(0, 44);
+    g.moveTo(19, 24);
+    g.lineTo(0, 44);
+    g.stroke();
+
+    // three masts, each with a yard and a sail bellied toward the bow
+    const masts = [
+      { y: -30, w: 42, sail: 16 },
+      { y: -2, w: 46, sail: 18 },
+      { y: 24, w: 34, sail: 13 },
+    ];
+    for (const mast of masts) {
+      g.strokeStyle = '#211a13';
+      g.lineWidth = 2;
+      g.beginPath();
+      g.moveTo(-mast.w / 2, mast.y);
+      g.lineTo(mast.w / 2, mast.y);
+      g.stroke();
+      g.fillStyle = 'rgba(230,226,208,0.26)';
+      g.beginPath();
+      g.moveTo(-mast.w / 2 + 3, mast.y);
+      g.quadraticCurveTo(0, mast.y - mast.sail, mast.w / 2 - 3, mast.y);
+      g.quadraticCurveTo(0, mast.y + 6, -mast.w / 2 + 3, mast.y);
+      g.closePath();
+      g.fill();
+      g.fillStyle = '#0c0a08';
+      g.beginPath();
+      g.arc(0, mast.y, 3, 0, TAU);
+      g.fill();
+    }
+
+    // raised stern, wheel, and the two lanterns
+    g.fillStyle = '#1b1611';
+    g.fillRect(-11, 34, 22, 13);
+    g.fillStyle = '#33261a';
+    g.fillRect(-9, 36, 18, 8);
+    g.strokeStyle = 'rgba(210,180,120,0.25)';
+    g.lineWidth = 1;
+    g.strokeRect(-11.5, 34.5, 22, 13);
+    g.strokeStyle = 'rgba(200,170,110,0.5)';
+    g.beginPath();
+    g.arc(0, 30, 3, 0, TAU);
     g.stroke();
     g.save();
     g.globalCompositeOperation = 'lighter';
-    glow(g, -12, -8, 9, '#ffbe78', 0.5);
+    glow(g, -18, 38, 10, '#ffb96e', 0.5);
+    glow(g, 18, 38, 10, '#ffb96e', 0.5);
     g.restore();
-    g.fillStyle = '#ffcf94';
-    g.fillRect(-12, -9, 2, 2);
-    g.drawImage(GIRL.idle[0], -5, -25);
+    g.fillStyle = '#ffd39a';
+    g.fillRect(-19, 37, 2, 2);
+    g.fillRect(17, 37, 2, 2);
+
+    // the girl at the stern, with the two shadows at either rail
+    g.fillStyle = '#e6d3bd';
+    g.beginPath();
+    g.arc(0, 42, 1.8, 0, TAU);
+    g.fill();
+    g.fillStyle = '#191521';
+    g.beginPath();
+    g.ellipse(0, 45, 3.4, 3.4, 0, 0, TAU);
+    g.fill();
+    g.fillStyle = 'rgba(230,180,90,0.6)';
+    g.fillRect(-3, 43, 1, 3);
+    for (const side of [-1, 1]) {
+      g.fillStyle = '#0e1218';
+      g.beginPath();
+      g.ellipse(side * 9, 43, 2.6, 3.2, 0, 0, TAU);
+      g.fill();
+      g.fillStyle = 'rgba(120,150,175,0.45)';
+      g.fillRect(side * 9 - 1, 40, 2, 1);
+    }
     g.restore();
 
+    const top = g.createLinearGradient(0, 0, 0, 30);
+    top.addColorStop(0, 'rgba(3,8,12,0.7)');
+    top.addColorStop(1, 'rgba(3,8,12,0)');
+    g.fillStyle = top;
+    g.fillRect(0, 0, W, 30);
     drawText(g, 'THE LONG WAY OUT', W / 2, 12, {
       align: 'center', color: 'rgba(190,204,222,0.55)', scale: 1, spacing: 3,
     });
