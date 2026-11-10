@@ -194,6 +194,7 @@ export class AudioEngine {
     this.nextChord = 0;
     this.nextBell = 0;
     this.riffStep = 0;
+    this.lastPlay = Object.create(null);
   }
 
   async start() {
@@ -218,25 +219,46 @@ export class AudioEngine {
     this.ctx = ctx;
 
     this.master = ctx.createGain();
-    this.master.gain.value = this.muted ? 0 : 0.85;
-    this.master.connect(ctx.destination);
+    this.master.gain.value = this.muted ? 0 : 0.72;
+
+    // A gentle master compressor and rumble filter keep stacked effects from
+    // turning into clipping noise when several attacks land at once.
+    this.clean = ctx.createBiquadFilter();
+    this.clean.type = 'highpass';
+    this.clean.frequency.value = 28;
+    this.clean.Q.value = 0.7;
+    this.compressor = ctx.createDynamicsCompressor();
+    this.compressor.threshold.value = -18;
+    this.compressor.knee.value = 18;
+    this.compressor.ratio.value = 3.5;
+    this.compressor.attack.value = 0.004;
+    this.compressor.release.value = 0.22;
+    this.master.connect(this.clean);
+    this.clean.connect(this.compressor);
+    this.compressor.connect(ctx.destination);
 
     this.reverb = ctx.createConvolver();
     this.reverb.buffer = this.makeIR(3.4, 2.6);
     this.revGain = ctx.createGain();
-    this.revGain.gain.value = 0.62;
+    this.revGain.gain.value = 0.38;
     this.reverb.connect(this.revGain);
     this.revGain.connect(this.master);
 
     this.music = ctx.createGain();
-    this.music.gain.value = 0.85;
+    this.music.gain.value = 0.78;
     this.music.connect(this.master);
-    this.music.connect(this.reverb);
+    this.musicRev = ctx.createGain();
+    this.musicRev.gain.value = 0.3;
+    this.music.connect(this.musicRev);
+    this.musicRev.connect(this.reverb);
 
     this.fx = ctx.createGain();
-    this.fx.gain.value = 0.95;
+    this.fx.gain.value = 0.78;
     this.fx.connect(this.master);
-    this.fx.connect(this.reverb);
+    this.fxRev = ctx.createGain();
+    this.fxRev.gain.value = 0.16;
+    this.fx.connect(this.fxRev);
+    this.fxRev.connect(this.reverb);
 
     this.delay = ctx.createDelay(1.2);
     this.delay.delayTime.value = 0.44;
@@ -301,8 +323,25 @@ export class AudioEngine {
     let last = 0;
     for (let i = 0; i < len; i++) {
       const white = Math.random() * 2 - 1;
-      last = (last + 0.02 * white) / 1.02;
-      data[i] = last * 3.2 + white * 0.15;
+      last = last * 0.985 + white * 0.035;
+      data[i] = last * 2.1 + white * 0.07;
+    }
+    // Remove DC and normalise so the shared noise source never clips.
+    let sum = 0;
+    let peak = 0;
+    for (let i = 0; i < len; i++) sum += data[i];
+    const mean = sum / len;
+    for (let i = 0; i < len; i++) {
+      data[i] -= mean;
+      peak = Math.max(peak, Math.abs(data[i]));
+    }
+    const norm = peak > 0 ? 0.82 / peak : 1;
+    for (let i = 0; i < len; i++) data[i] *= norm;
+    // Crossfade the loop seam so wind and noise beds do not tick.
+    const fade = Math.min(2048, Math.floor(len * 0.1));
+    for (let i = 0; i < fade; i++) {
+      const k = i / fade;
+      data[len - fade + i] = data[len - fade + i] * (1 - k) + data[i] * k;
     }
     return buf;
   }
@@ -324,7 +363,7 @@ export class AudioEngine {
   setMuted(m) {
     this.muted = m;
     if (!this.ctx) return;
-    this.master.gain.setTargetAtTime(m ? 0 : 0.85, this.ctx.currentTime, 0.15);
+    this.master.gain.setTargetAtTime(m ? 0 : 0.72, this.ctx.currentTime, 0.15);
   }
 
   toggleMute() {
@@ -438,6 +477,9 @@ export class AudioEngine {
   play(name) {
     if (!this.ctx || this.ctx.state !== 'running') return;
     const t = this.ctx.currentTime;
+    const last = this.lastPlay[name] || 0;
+    if (t - last < 0.035) return;
+    this.lastPlay[name] = t;
     switch (name) {
       case 'step':
         this.step(t);
@@ -461,6 +503,40 @@ export class AudioEngine {
         break;
       case 'blast':
         this.sweep(t, 640, 90, 0.34, 0.05, 'sawtooth');
+        this.noiseHit(t, 900, 0.2, 0.018, 1.2, 'lowpass');
+        break;
+      case 'blueWindup':
+        this.blueWindup(t);
+        break;
+      case 'blueCharge':
+        this.blueCharge(t);
+        break;
+      case 'blueShard':
+        this.blueShard(t);
+        break;
+      case 'blueSlash':
+        this.blueSlash(t);
+        break;
+      case 'maceUp':
+        this.maceUp(t);
+        break;
+      case 'maceSlam':
+        this.maceSlam(t);
+        break;
+      case 'dogBite':
+        this.dogBite(t);
+        break;
+      case 'scorpionClaw':
+        this.scorpionClaw(t);
+        break;
+      case 'scorpionSting':
+        this.scorpionSting(t);
+        break;
+      case 'hurt':
+        this.heroHurt(t);
+        break;
+      case 'shardCast':
+        this.shardCast(t);
         break;
       case 'whale':
         this.sweep(t, 64, 148, 2.8, 0.055, 'sine');
@@ -632,6 +708,84 @@ export class AudioEngine {
     o2.stop(time + 0.95);
   }
 
+  noiseHit(t, freq, dur, gain, q = 1, type = 'bandpass') {
+    const ctx = this.ctx;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    const f = ctx.createBiquadFilter();
+    f.type = type;
+    f.frequency.value = freq;
+    f.Q.value = q;
+    const g = ctx.createGain();
+    src.connect(f);
+    f.connect(g);
+    g.connect(this.fx);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(gain, t + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    src.start(t);
+    src.stop(t + dur + 0.04);
+  }
+
+  blueWindup(t) {
+    this.sweep(t, 240, 620, 0.44, 0.024, 'sine');
+    this.sweep(t, 120, 300, 0.44, 0.014, 'triangle');
+    this.noiseHit(t, 2200, 0.32, 0.009, 2.4);
+  }
+
+  blueCharge(t) {
+    this.sweep(t, 360, 980, 0.48, 0.027, 'sine');
+    this.sweep(t, 180, 490, 0.46, 0.013, 'triangle');
+    this.noiseHit(t, 2800, 0.38, 0.01, 3);
+    this.bell(midi(88), t + 0.06, 0.55, 0.018, true);
+  }
+
+  blueShard(t) {
+    this.sweep(t, 1320, 540, 0.22, 0.024, 'triangle');
+    this.noiseHit(t, 3200, 0.16, 0.016, 2.8, 'highpass');
+  }
+
+  blueSlash(t) {
+    this.noiseHit(t, 1050, 0.16, 0.022, 1.4);
+    this.sweep(t, 520, 190, 0.15, 0.016, 'sawtooth');
+  }
+
+  maceUp(t) {
+    this.noiseHit(t, 300, 0.5, 0.021, 0.7);
+    this.sweep(t, 92, 138, 0.45, 0.016, 'sine');
+  }
+
+  maceSlam(t) {
+    this.sweep(t, 150, 42, 0.4, 0.075, 'sine');
+    this.noiseHit(t, 340, 0.3, 0.045, 0.8, 'lowpass');
+    this.noiseHit(t, 1200, 0.12, 0.014, 1.2);
+  }
+
+  dogBite(t) {
+    this.sweep(t, 220, 90, 0.12, 0.03, 'sawtooth');
+    this.noiseHit(t, 900, 0.09, 0.016, 1.8);
+  }
+
+  scorpionClaw(t) {
+    this.noiseHit(t, 1350, 0.1, 0.022, 2);
+    this.sweep(t, 170, 80, 0.16, 0.024, 'square');
+  }
+
+  scorpionSting(t) {
+    this.sweep(t, 760, 180, 0.22, 0.026, 'sawtooth');
+    this.noiseHit(t, 2400, 0.18, 0.018, 2.4);
+  }
+
+  heroHurt(t) {
+    this.sweep(t, 120, 55, 0.26, 0.052, 'sine');
+    this.noiseHit(t, 320, 0.16, 0.02, 0.9, 'lowpass');
+  }
+
+  shardCast(t) {
+    this.sweep(t, 580, 1060, 0.16, 0.02, 'triangle');
+    this.noiseHit(t, 2600, 0.1, 0.01, 2);
+  }
+
   step(t) {
     const ctx = this.ctx;
     const src = ctx.createBufferSource();
@@ -640,16 +794,29 @@ export class AudioEngine {
     const f = ctx.createBiquadFilter();
     f.type = 'bandpass';
     f.frequency.value = 380 + Math.random() * 260;
-    f.Q.value = 1.1;
+    f.Q.value = 1.05;
     const g = ctx.createGain();
     src.connect(f);
     f.connect(g);
     g.connect(this.fx);
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.linearRampToValueAtTime(0.035, t + 0.012);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.13);
+    g.gain.linearRampToValueAtTime(0.024, t + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
     src.start(t);
     src.stop(t + 0.2);
+
+    const o = ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(92, t);
+    o.frequency.exponentialRampToValueAtTime(52, t + 0.09);
+    const thud = ctx.createGain();
+    o.connect(thud);
+    thud.connect(this.fx);
+    thud.gain.setValueAtTime(0.0001, t);
+    thud.gain.linearRampToValueAtTime(0.012, t + 0.006);
+    thud.gain.exponentialRampToValueAtTime(0.0001, t + 0.1);
+    o.start(t);
+    o.stop(t + 0.12);
   }
 
   sweep(t, f0, f1, dur, gain, type) {

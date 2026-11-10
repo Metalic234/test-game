@@ -999,8 +999,9 @@ export class Game {
         windupT: 0,
         windupMax: 0.46,
         strikeX: teen.x,
-        storm: null,
-        stormCooldown: 0,
+        shardT: 0,
+        shardPending: false,
+        nextAttack: 'physical',
         // Blue gives her a breath before his first mark, so the read is learnable.
         attackCooldown: i === 0 ? 1.6 : 1.0 + i * 0.35,
         slamT: 0,
@@ -1014,6 +1015,7 @@ export class Game {
       hero: { hp: 100, max: 100, hurt: 0 },
       heroDown: false,
       shards: [],
+      blueShards: [],
       laserActive: false,
       laserDamageT: 0,
       defeated: 0,
@@ -1069,121 +1071,84 @@ export class Game {
     const blue = battle.bosses.find((boss) => boss.kind === 'blue');
     const brown = battle.bosses.find((boss) => boss.kind === 'brown');
 
-    // Blue marks the ground at her feet, then strikes it. The mark is fixed the
-    // moment it appears, so a step out of it always saves her: every hit is one
-    // she could have read. In his last third he stops lunging and calls the
-    // storm — three marks in a row, each fixed where she was standing.
-    // Roughly a dozen seconds of volleys, long enough for her health to matter.
+    // Blue alternates a committed physical lunge with a long-range fan of blue
+    // shards. Both attacks are locked in on the frame they start, so a step or
+    // a jump is always enough to answer them.
     if (blue && blue.alive) {
-      if (blue.storm) {
-        const s = blue.storm;
-        s.t += dt;
-        if (s.spawned < 3 && s.t >= 0.35 + s.spawned * 0.55) {
-          s.marks.push({ x: p.x, w: 0.55 });
-          s.spawned++;
-          this.audio.play('jump');
+      if (blue.shardT > 0) {
+        blue.shardT = Math.max(0, blue.shardT - dt);
+        if (blue.shardT <= 0 && blue.shardPending) {
+          blue.shardPending = false;
+          this.castBlueShards(blue);
+          const fury = 1 - blue.hp / blue.maxHp;
+          blue.attackCooldown = 1.5 - 0.32 * fury;
         }
-        for (let i = s.marks.length - 1; i >= 0; i--) {
-          const mark = s.marks[i];
-          mark.w -= dt;
-          if (mark.w > 0) continue;
-          s.marks.splice(i, 1);
-          const hit = Math.abs(p.x - mark.x) < 22 && battle.hero.hp > 0;
-          if (hit) {
-            battle.hero.hp = Math.max(0, battle.hero.hp - 9);
-            battle.hero.hurt = 1;
-          }
-          this.audio.play('blast');
-          for (let k = 0; k < (hit ? 16 : 9); k++) {
-            const a = Math.random() * TAU;
-            const sp = 10 + Math.random() * 52;
-            this.spawn({
-              type: 'spark',
-              x: mark.x + (Math.random() - 0.5) * 6,
-              y: groundAt(this.level, mark.x) - 4 - Math.random() * 16,
-              vx: Math.cos(a) * sp,
-              vy: Math.sin(a) * sp - 18,
-              size: k % 4 ? 1 : 2,
-              color: k % 2 ? '#ffffff' : '#9fc8ff',
-              max: 0.3 + Math.random() * 0.35,
-              grav: 70,
-              drag: 0.94,
-            });
-          }
+      } else if (blue.windupT > 0) {
+        blue.windupT = Math.max(0, blue.windupT - dt);
+        if (blue.windupT <= 0) {
+          blue.lungeT = 0.26;
+          const fury = 1 - blue.hp / blue.maxHp;
+          blue.attackCooldown = 1.62 - 0.22 * fury;
+          blue.pendingHit = true;
         }
-        if (s.spawned >= 3 && s.marks.length === 0) {
-          blue.storm = null;
-          blue.stormCooldown = 1.25;
-        }
-      } else if (blue.hp <= blue.maxHp / 3) {
-        // The blade goes down, and the sky answers.
-        if (blue.stormCooldown > 0) {
-          blue.stormCooldown -= dt;
-        } else {
-          blue.storm = { t: 0, spawned: 0, marks: [] };
-          blue.windupT = 0;
-          blue.lungeT = 0;
+      } else if (blue.lungeT > 0) {
+        blue.lungeT = Math.max(0, blue.lungeT - dt);
+        if (blue.pendingHit && blue.lungeT <= 0.12) {
           blue.pendingHit = false;
-          this.audio.play('power');
+          const markX = blue.strikeX;
+          const inMark = Math.abs(p.x - markX) < 24;
+          const inReach = Math.abs(blue.x - p.x) < 44;
+          if (inMark && inReach && !airborne && battle.hero.hp > 0) {
+            battle.hero.hp = Math.max(0, battle.hero.hp - 11);
+            battle.hero.hurt = 1;
+            this.audio.play('hurt');
+            for (let i = 0; i < 10; i++) {
+              this.spawn({
+                type: 'spark', x: p.x, y: p.y - 12,
+                vx: (Math.random() - 0.5) * 70, vy: -Math.random() * 60,
+                size: 1, color: i % 2 ? '#ffffff' : '#9fc8ff',
+                max: 0.4, grav: 80, drag: 0.95,
+              });
+            }
+          } else {
+            // Her step took her clear; the strike dies on the stones.
+            this.audio.play('blueSlash');
+            for (let i = 0; i < 6; i++) {
+              this.spawn({
+                type: 'spark', x: markX, y: groundAt(this.level, markX) - 3,
+                vx: (Math.random() - 0.5) * 46, vy: -6 - Math.random() * 22,
+                size: 1, color: i % 2 ? '#9fc8ff' : '#ffffff',
+                max: 0.3, grav: 60, drag: 0.94,
+              });
+            }
+          }
         }
       } else {
         blue.attackCooldown -= dt;
-
-        if (blue.attackCooldown <= 0 && blue.lungeT <= 0 && blue.windupT <= 0) {
-          blue.windupT = blue.windupMax;
-          blue.strikeX = p.x;
-          blue.pendingHit = false;
-          this.audio.play('power');
-        }
-        if (blue.windupT > 0) {
-          blue.windupT = Math.max(0, blue.windupT - dt);
-          if (blue.windupT <= 0) {
-            blue.lungeT = 0.26;
-            const fury = 1 - blue.hp / blue.maxHp;
-            blue.attackCooldown = 1.62 - 0.22 * fury;
-            blue.pendingHit = true;
-          }
-        }
-        if (blue.lungeT > 0) {
-          blue.lungeT = Math.max(0, blue.lungeT - dt);
-          if (blue.pendingHit && blue.lungeT <= 0.12) {
+        if (blue.attackCooldown <= 0) {
+          const dist = Math.abs(blue.x - p.x);
+          const wantsShards = blue.nextAttack === 'shards' || dist > 150;
+          if (wantsShards) {
+            blue.shardT = 0.5;
+            blue.shardPending = true;
+            blue.nextAttack = 'physical';
+            this.audio.play('blueCharge');
+          } else {
+            blue.windupT = blue.windupMax;
+            blue.strikeX = p.x;
             blue.pendingHit = false;
-            const markX = blue.strikeX;
-            const inMark = Math.abs(p.x - markX) < 24;
-            const inReach = Math.abs(blue.x - p.x) < 44;
-            if (inMark && inReach && !airborne && battle.hero.hp > 0) {
-              battle.hero.hp = Math.max(0, battle.hero.hp - 11);
-              battle.hero.hurt = 1;
-              this.audio.play('whisper');
-              for (let i = 0; i < 10; i++) {
-                this.spawn({
-                  type: 'spark', x: p.x, y: p.y - 12,
-                  vx: (Math.random() - 0.5) * 70, vy: -Math.random() * 60,
-                  size: 1, color: i % 2 ? '#ffffff' : '#9fc8ff',
-                  max: 0.4, grav: 80, drag: 0.95,
-                });
-              }
-            } else {
-              // Her step took her clear; the strike dies on the stones.
-              for (let i = 0; i < 6; i++) {
-                this.spawn({
-                  type: 'spark', x: markX, y: groundAt(this.level, markX) - 3,
-                  vx: (Math.random() - 0.5) * 46, vy: -6 - Math.random() * 22,
-                  size: 1, color: i % 2 ? '#9fc8ff' : '#ffffff',
-                  max: 0.3, grav: 60, drag: 0.94,
-                });
-              }
-            }
+            blue.nextAttack = 'shards';
+            this.audio.play('blueWindup');
           }
         }
       }
 
       let blueTarget;
-      if (blue.storm) blueTarget = p.x + 44;
+      if (blue.shardT > 0) blueTarget = p.x + 132;
       else if (blue.lungeT > 0) blueTarget = blue.strikeX + 13;
       else if (blue.windupT > 0) blueTarget = blue.strikeX + 26;
-      else blueTarget = p.x + 34;
-      blue.x = damp(blue.x, blueTarget, blue.storm ? 5 : (blue.lungeT > 0 ? 9 : 3.8), dt);
+      else blueTarget = p.x + (blue.nextAttack === 'physical' ? 42 : 108);
+      blue.x = damp(blue.x, blueTarget, blue.shardT > 0 ? 4.5 : (blue.lungeT > 0 ? 9 : 3.8), dt);
       blue.y = groundAt(this.level, blue.x);
     }
 
@@ -1201,11 +1166,11 @@ export class Game {
           brown.slamPending = false;
           brown.stompT = 0.65;
           const markX = brown.slamX;
-          const hit = Math.abs(p.x - markX) < 44 && !airborne && battle.hero.hp > 0;
+          const hit = Math.abs(p.x - markX) < 58 && !airborne && battle.hero.hp > 0;
           if (hit) {
-            battle.hero.hp = Math.max(0, battle.hero.hp - 17);
+            battle.hero.hp = Math.max(0, battle.hero.hp - 19);
             battle.hero.hurt = 1;
-            this.audio.play('whisper');
+            this.audio.play('hurt');
             for (let i = 0; i < 14; i++) {
               const a = Math.random() * TAU;
               const sp = 14 + Math.random() * 58;
@@ -1218,7 +1183,7 @@ export class Game {
               });
             }
           }
-          this.audio.play('blast');
+          this.audio.play('maceSlam');
           for (let i = 0; i < 22; i++) {
             const side = i % 2 ? 1 : -1;
             this.spawn({
@@ -1240,15 +1205,20 @@ export class Game {
       } else if (brown.slamRecover <= 0) {
         // He closes in slowly, then plants his feet and commits the blow.
         const targetX = Math.min(p.x + 104, this.level.width - 60);
-        const step = 46 * dt;
+        const step = 60 * dt;
         brown.x += clamp(targetX - brown.x, -step, step);
         brown.y = groundAt(this.level, brown.x);
         brown.slamClock -= dt;
         if (brown.slamClock <= 0) {
           brown.slamT = brown.slamMax;
-          brown.slamX = p.x;
+          // The head lands inside the mace's actual reach. If she is already
+          // outside it, the strike bites empty road instead of tracking her.
+          const dir = p.x < brown.x ? -1 : 1;
+          const gap = Math.abs(p.x - brown.x);
+          const reach = gap < 30 ? gap : Math.min(106, gap);
+          brown.slamX = brown.x + dir * reach;
           brown.slamPending = true;
-          this.audio.play('power');
+          this.audio.play('maceUp');
         }
       } else {
         brown.y = groundAt(this.level, brown.x);
@@ -1256,6 +1226,39 @@ export class Game {
     }
 
     battle.hero.hurt = Math.max(0, battle.hero.hurt - dt * 2.2);
+
+    // Blue's long-range shards keep flying until they leave the street or find
+    // her. They are deliberately slower than the girl's own volley, so they can
+    // be read and jumped.
+    const keptBlue = [];
+    for (const shard of battle.blueShards) {
+      shard.life += dt;
+      shard.x += shard.vx * dt;
+      shard.y += shard.vy * dt;
+      if (shard.life > 2.4 || shard.x < this.cam.x - 40 || shard.x > this.cam.x + W + 40) continue;
+      const hit = battle.hero.hp > 0
+        && Math.abs(shard.x - p.x) < 8
+        && shard.y > p.y - PH
+        && shard.y < p.y + 2;
+      if (hit) {
+        battle.hero.hp = Math.max(0, battle.hero.hp - 8);
+        battle.hero.hurt = 1;
+        this.audio.play('hurt');
+        for (let i = 0; i < 12; i++) {
+          const a = Math.random() * TAU;
+          const sp = 18 + Math.random() * 50;
+          this.spawn({
+            type: 'spark', x: p.x, y: p.y - 10,
+            vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 10,
+            size: 1, color: i % 2 ? '#ffffff' : '#6fa8ff',
+            max: 0.3 + Math.random() * 0.35, grav: 70, drag: 0.94,
+          });
+        }
+        continue;
+      }
+      keptBlue.push(shard);
+    }
+    battle.blueShards = keptBlue;
 
     // Every press throws a volley, in either phase, with no wait between them.
     if (this.input.consume('shard')) this.throwWhiteShards();
@@ -1310,6 +1313,41 @@ export class Game {
     if (battle.defeated >= battle.totalDefeats && !battle.finish) this.showPortArrival();
   }
 
+  castBlueShards(blue) {
+    const battle = this.bossBattle;
+    const L = this.level;
+    if (!battle) return;
+    const p = this.player;
+    const ox = blue.x - 10;
+    const oy = groundAt(L, blue.x) - 27;
+    const aim = Math.atan2((p.y - 10) - oy, p.x - ox);
+    const fury = 1 - blue.hp / blue.maxHp;
+    const count = fury > 0.66 ? 3 : 2;
+    for (let i = 0; i < count; i++) {
+      const a = aim + (i - (count - 1) / 2) * 0.085;
+      const speed = 170 + Math.random() * 10;
+      battle.blueShards.push({
+        x: ox,
+        y: oy,
+        vx: Math.cos(a) * speed,
+        vy: Math.sin(a) * speed,
+        life: 0,
+        spin: (i - (count - 1) / 2) * 0.6,
+      });
+    }
+    this.audio.play('blueShard');
+    for (let i = 0; i < 10; i++) {
+      const a = Math.random() * TAU;
+      const sp = 14 + Math.random() * 42;
+      this.spawn({
+        type: 'spark', x: ox, y: oy,
+        vx: Math.cos(a) * sp - 16, vy: Math.sin(a) * sp,
+        size: 1, color: i % 2 ? '#dff1ff' : '#6fa8ff',
+        max: 0.25 + Math.random() * 0.3, grav: 26, drag: 0.94,
+      });
+    }
+  }
+
   throwWhiteShards() {
     const battle = this.bossBattle;
     const p = this.player;
@@ -1341,7 +1379,7 @@ export class Game {
         spin: (i - 1) * 0.55,
       });
     }
-    this.audio.play('blast');
+    this.audio.play('shardCast');
     for (let i = 0; i < 7; i++) {
       this.spawn({
         type: 'spark', x: p.x + 8, y: p.y - 20,
@@ -1404,6 +1442,7 @@ export class Game {
       }
       if (boss.kind === 'blue') {
         // The duel is over. The street opens, and the heavy one steps out of the dark.
+        battle.blueShards.length = 0;
         const brown = battle.bosses.find((entry) => entry.kind === 'brown');
         if (brown) {
           brown.x = Math.min(this.level.width - 24, battle.arenaMax + 100);
@@ -1733,6 +1772,7 @@ export class Game {
         dog.dir = Math.sign(dx) || dog.dir;
         dog.x += dog.dir * 38 * dt;
         if (Math.abs(dx) < 23 && Math.abs(p.y - gy) < 26 && dog.biteCd <= 0) {
+          this.audio.play('dogBite');
           this.hurtWilds(7, dog.x);
           dog.biteCd = 1.15;
         }
@@ -1816,9 +1856,9 @@ export class Game {
       if (b.stingT <= 0 && !b.stingHit) {
         b.stingHit = true;
         b.stomp = 0.55;
-        const hit = Math.abs(p.x - b.stingX) < 36 && p.y > groundAt(L, p.x) - 18;
+        const hit = Math.abs(p.x - b.stingX) < 38 && Math.abs(p.y - b.y) < 30;
         if (hit) this.hurtWilds(15, b.stingX);
-        this.audio.play('blast');
+        this.audio.play('maceSlam');
         for (let i = 0; i < 22; i++) {
           const side = i % 2 ? 1 : -1;
           this.spawn({
@@ -1840,21 +1880,24 @@ export class Game {
       if (b.clawT <= 0 && !b.clawHit) {
         b.clawHit = true;
         if (Math.abs(p.x - b.x) < 78 && Math.abs(p.y - b.y) < 28) this.hurtWilds(12, b.x);
-        this.audio.play('whisper');
+        else this.audio.play('scorpionClaw');
       }
     } else {
       b.attackCd -= dt;
       if (b.attackCd <= 0) {
-        if (Math.abs(dx) < 115) {
+        if (Math.abs(dx) < 105) {
           b.clawT = b.clawMax;
           b.clawHit = false;
-        } else {
+          this.audio.play('scorpionClaw');
+        } else if (Math.abs(dx) < 175) {
+          // The tail is a physical strike in front of the scorpion, not a
+          // projectile aimed at the girl's feet.
           b.stingT = b.stingMax;
-          b.stingX = p.x;
+          b.stingX = b.x + b.facing * 66;
           b.stingHit = false;
+          this.audio.play('scorpionSting');
         }
         b.attackCd = 2.0 + Math.random() * 1.1;
-        this.audio.play('power');
       }
     }
   }
@@ -1869,7 +1912,7 @@ export class Game {
     p.vx = (p.x < sourceX ? -1 : 1) * 120;
     p.vy = -48;
     p.onGround = false;
-    this.audio.play('whisper');
+    this.audio.play('hurt');
     for (let i = 0; i < 12; i++) {
       this.spawn({
         type: 'spark',
@@ -1925,7 +1968,7 @@ export class Game {
         spin: (i - 1) * 0.55,
       });
     }
-    this.audio.play('blast');
+    this.audio.play('shardCast');
     for (let i = 0; i < 7; i++) {
       this.spawn({
         type: 'spark',
@@ -3557,6 +3600,88 @@ export class Game {
     }
   }
 
+  drawBrownMace(g, boss) {
+    const L = this.level;
+    const sx = boss.x - this.cam.x;
+    const baseY = groundAt(L, boss.x);
+    const s = boss.scale || 1;
+    const handX = sx - 7 * s;
+    const handY = baseY - 27 * s;
+    let headX = sx + 20 * s;
+    let headY = baseY - 68 * s;
+
+    if (boss.slamT > 0) {
+      const k = clamp(1 - boss.slamT / boss.slamMax, 0, 1);
+      if (k < 0.68) {
+        const q = k / 0.68;
+        headX = handX + (16 + q * 20) * s;
+        headY = handY - (46 + q * 14) * s;
+      } else {
+        const q = (k - 0.68) / 0.32;
+        const mx = boss.slamX - this.cam.x;
+        const my = groundAt(L, boss.slamX) - 7;
+        headX = lerp(handX + 36 * s, mx, q);
+        headY = lerp(handY - 60 * s, my, q);
+      }
+    } else if (boss.stompT > 0) {
+      const q = clamp(1 - boss.stompT / 0.65, 0, 1);
+      const mx = boss.slamX - this.cam.x;
+      const my = groundAt(L, boss.slamX) - 7;
+      const back = clamp(q * 1.4, 0, 1);
+      headX = lerp(mx, handX - 30 * s, back);
+      headY = lerp(my, handY + 8 * s, back);
+    }
+
+    const dx = headX - handX;
+    const dy = headY - handY;
+    const len = Math.max(1, Math.hypot(dx, dy));
+    const ux = dx / len;
+    const uy = dy / len;
+    const angle = Math.atan2(dy, dx);
+    const r = 7.5 * s;
+
+    g.save();
+    g.lineCap = 'round';
+    g.strokeStyle = 'rgba(12,7,4,0.9)';
+    g.lineWidth = 5 * s;
+    g.beginPath();
+    g.moveTo(handX, handY);
+    g.lineTo(headX - ux * 4 * s, headY - uy * 4 * s);
+    g.stroke();
+    g.strokeStyle = '#7d4e2e';
+    g.lineWidth = 2.6 * s;
+    g.beginPath();
+    g.moveTo(handX, handY);
+    g.lineTo(headX - ux * 4 * s, headY - uy * 4 * s);
+    g.stroke();
+    g.strokeStyle = 'rgba(232,184,120,0.72)';
+    g.lineWidth = 1;
+    for (let i = 1; i <= 3; i++) {
+      const t = i / 4;
+      const px = lerp(handX, headX, t);
+      const py = lerp(handY, headY, t);
+      g.beginPath();
+      g.moveTo(px - uy * 3 * s, py + ux * 3 * s);
+      g.lineTo(px + uy * 3 * s, py - ux * 3 * s);
+      g.stroke();
+    }
+    disc(g, headX, headY, r + 1.5 * s, '#2a170c');
+    disc(g, headX, headY, r, '#8f5c35');
+    g.strokeStyle = '#e0b078';
+    g.lineWidth = 1.4 * s;
+    for (let i = 0; i < 8; i++) {
+      const a = angle + (i / 8) * TAU;
+      g.beginPath();
+      g.moveTo(headX + Math.cos(a) * r * 0.8, headY + Math.sin(a) * r * 0.8);
+      g.lineTo(headX + Math.cos(a) * r * 1.55, headY + Math.sin(a) * r * 1.55);
+      g.stroke();
+    }
+    glow(g, headX, headY, 18 * s, '#c89058', 0.22);
+    g.fillStyle = '#f0c396';
+    g.fillRect(Math.round(headX - 1), Math.round(headY - 1), 2, 2);
+    g.restore();
+  }
+
   drawBossBattle(g) {
     const battle = this.bossBattle;
     const L = this.level;
@@ -3601,11 +3726,12 @@ export class Game {
         style: boss.style,
         scale: boss.scale,
         flare: boss.flash > 0 ? 1.65
-          : (isBlue && (boss.lungeT > 0 || boss.storm) ? 1.35
+          : (isBlue && (boss.lungeT > 0 || boss.shardT > 0) ? 1.35
             : isBlue && boss.windupT > 0 ? 1.24
               : !isBlue && boss.slamT > 0 ? 1.32 : 0.92),
         facing: -1,
       });
+      if (boss.kind === 'brown') this.drawBrownMace(g, boss);
       if (boss.flash > 0) {
         g.save();
         g.globalAlpha = boss.flash * 0.22;
@@ -3633,39 +3759,22 @@ export class Game {
           g.restore();
         }
       }
-      // The storm's marks: a ring tightening on the ground, then the bolt.
-      if (isBlue && boss.storm) {
+      // Blue gathers a fan of shards at his open hand before the throw.
+      if (isBlue && boss.shardT > 0) {
+        const k = clamp(1 - boss.shardT / 0.5, 0, 1);
+        const hx = sx - 12;
+        const hy = groundAt(L, boss.x) - 26;
         g.save();
         g.globalCompositeOperation = 'lighter';
-        g.globalAlpha = 0.3 + Math.sin(this.time * 14) * 0.12;
-        glow(g, sx, groundAt(L, boss.x) - 30, 30, '#9fc8ff', 0.45);
-        g.restore();
-        for (const mark of boss.storm.marks) {
-          const mx = mark.x - this.cam.x;
-          const my = groundAt(L, mark.x) - 2;
-          if (mx < -40 || mx > W + 40) continue;
-          const k = clamp(1 - mark.w / 0.55, 0, 1);
-          g.save();
-          g.globalCompositeOperation = 'lighter';
-          if (k > 0.68) {
-            const boltA = (k - 0.68) / 0.32;
-            const jag = Math.round((Math.random() - 0.5) * 6);
-            g.globalAlpha = boltA * 0.9;
-            g.fillStyle = '#dff1ff';
-            g.fillRect(Math.round(mx), Math.round(my) - 130, 2, 130);
-            g.fillRect(Math.round(mx) + jag, Math.round(my) - 96, 1, 96);
-            glow(g, mx, my, 30, '#b9d7ff', 0.75 * boltA);
-          } else {
-            g.globalAlpha = 0.35 + k * 0.5;
-            glow(g, mx, my - 6, 12 + k * 16, '#6fa8ff', 0.5);
-            g.strokeStyle = '#b9d7ff';
-            g.lineWidth = 1;
-            g.beginPath();
-            g.ellipse(mx, my, 22 - k * 3, 4, 0, 0, TAU);
-            g.stroke();
-          }
-          g.restore();
+        g.globalAlpha = 0.35 + k * 0.45;
+        glow(g, hx, hy, 10 + k * 18, '#6fa8ff', 0.55);
+        g.fillStyle = '#dff1ff';
+        for (let i = 0; i < 3; i++) {
+          const a = this.time * 2.4 + (i / 3) * TAU;
+          const r = 8 + k * 7;
+          g.fillRect(Math.round(hx + Math.cos(a) * r), Math.round(hy + Math.sin(a) * r * 0.6), 2, 2);
         }
+        g.restore();
       }
       // The heavy one's overhead blow: the ring is where his fist will land.
       if (!isBlue && boss.slamT > 0) {
@@ -3680,12 +3789,12 @@ export class Game {
           g.strokeStyle = '#f0c396';
           g.lineWidth = 2;
           g.beginPath();
-          g.ellipse(mx, my, 44 - k * 8, 6, 0, 0, TAU);
+          g.ellipse(mx, my, 58 - k * 8, 6, 0, 0, TAU);
           g.stroke();
           g.strokeStyle = 'rgba(240,195,150,0.55)';
           g.lineWidth = 1;
           g.beginPath();
-          g.ellipse(mx, my, 28 - k * 5, 4, 0, 0, TAU);
+          g.ellipse(mx, my, 38 - k * 5, 4, 0, 0, TAU);
           g.stroke();
           g.fillStyle = 'rgba(240,195,150,0.4)';
           g.fillRect(Math.round(mx), Math.round(my) - 58 + k * 20, 1, 36);
@@ -3758,6 +3867,31 @@ export class Game {
       g.fill();
       g.fillStyle = '#bdeaff';
       g.fillRect(-3, -1, 5, 2);
+      g.restore();
+    }
+
+    // Blue's long-range shards: colder and heavier than hers, with a comet tail.
+    for (const shard of battle.blueShards) {
+      const sx = shard.x - this.cam.x;
+      if (sx < -24 || sx > W + 24) continue;
+      g.save();
+      g.translate(Math.round(sx), Math.round(shard.y));
+      g.rotate(Math.atan2(shard.vy, shard.vx) + shard.spin);
+      g.globalCompositeOperation = 'lighter';
+      g.globalAlpha = 0.3;
+      g.fillStyle = '#6fa8ff';
+      g.fillRect(-20, -2, 18, 4);
+      glow(g, 0, 0, 13, '#9fc8ff', 0.72);
+      g.fillStyle = '#dff1ff';
+      g.beginPath();
+      g.moveTo(6, 0);
+      g.lineTo(0, -4);
+      g.lineTo(-6, 0);
+      g.lineTo(0, 4);
+      g.closePath();
+      g.fill();
+      g.fillStyle = '#ffffff';
+      g.fillRect(-2, -1, 4, 2);
       g.restore();
     }
 
@@ -4020,7 +4154,7 @@ export class Game {
     const blueAlive = blueBoss && blueBoss.alive;
     const brownAlive = brownBoss && brownBoss.alive;
     const heading = blueAlive
-      ? (blueBoss.storm ? 'THE STORM' : 'THE DUEL')
+      ? 'THE DUEL'
       : brownAlive ? 'THE HEAVY ONE' : 'THE LAST LIGHT';
     drawText(g, heading, W / 2, 7, {
       align: 'center', color: '#e9edf6', scale: 1, spacing: 2, shadow: '#000000',
@@ -4028,7 +4162,7 @@ export class Game {
 
     // One opponent at a time: only the one she is actually fighting gets a bar.
     const entries = blueAlive
-      ? [{ kind: 'blue', label: blueBoss.storm ? 'BLUE  /  STORM' : 'BLUE  /  DUEL', x: 176, w: 128 }]
+      ? [{ kind: 'blue', label: 'BLUE  /  DUEL', x: 176, w: 128 }]
       : [{ kind: 'brown', label: 'BROWN  /  HEAVY', x: 176, w: 128 }];
     for (const entry of entries) {
       const boss = battle.bosses.find((item) => item.kind === entry.kind);
@@ -4079,17 +4213,17 @@ export class Game {
       const laserText = battle.laserActive
         ? 'GUARDIANS: HEAVY BEAM'
         : 'HOLD C  KNIGHTS\' BEAM';
-      const storming = blueAlive && blueBoss.storm;
+      const casting = blueAlive && blueBoss.shardT > 0;
       const marked = blueAlive && blueBoss.windupT > 0;
       const bracing = brownAlive && brownBoss.slamT > 0;
-      const hint = storming
-        ? 'KEEP MOVING - OUT OF THE MARKS'
+      const hint = casting
+        ? 'BLUE SHARDS - JUMP OR MOVE'
         : marked ? 'JUMP OR STEP OUT OF THE MARK'
-          : bracing ? 'JUMP OR CLEAR THE MARK'
+          : bracing ? 'JUMP OR CLEAR THE MACE'
             : 'W JUMP   SHIFT DASH   X SHARDS   C BEAM';
       drawText(g, hint, W / 2, H - 25, {
         align: 'center',
-        color: (storming || marked) ? '#b9d7ff' : bracing ? '#f0c396' : '#f2f0f7',
+        color: (casting || marked) ? '#b9d7ff' : bracing ? '#f0c396' : '#f2f0f7',
         scale: 1, spacing: 1, shadow: '#000000',
       });
       drawText(g, laserText, W / 2, H - 13, {
