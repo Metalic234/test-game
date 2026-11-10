@@ -43,6 +43,44 @@ const BIOMES = {
     bright: 700,
     music: 0.8,
   },
+  mainland: {
+    root: 40,
+    chords: [
+      [40, 47, 52],
+      [36, 43, 48],
+      [43, 50, 55],
+      [38, 45, 50],
+    ],
+    scale: [0, 3, 5, 7, 10],
+    chordDur: 14,
+    padGain: 0.075,
+    bellGain: 0.055,
+    bellEvery: [4.6, 9.2],
+    wind: 0.042,
+    windFreq: 340,
+    windQ: 0.6,
+    bright: 640,
+    music: 0.82,
+  },
+  cliffs: {
+    root: 45,
+    chords: [
+      [45, 52, 57],
+      [41, 48, 53],
+      [48, 55, 60],
+      [43, 50, 55],
+    ],
+    scale: [0, 2, 5, 7, 10],
+    chordDur: 15,
+    padGain: 0.075,
+    bellGain: 0.06,
+    bellEvery: [3.8, 7.6],
+    wind: 0.05,
+    windFreq: 860,
+    windQ: 1.1,
+    bright: 1100,
+    music: 0.82,
+  },
   mountain: {
     root: 42,
     chords: [
@@ -423,6 +461,11 @@ export class AudioEngine {
         break;
       case 'blast':
         this.sweep(t, 640, 90, 0.34, 0.05, 'sawtooth');
+        break;
+      case 'whale':
+        this.sweep(t, 64, 148, 2.8, 0.055, 'sine');
+        this.sweep(t + 0.25, 150, 72, 2.3, 0.03, 'triangle');
+        this.swell(t, 2.8, 0.026);
         break;
       case 'ending':
         this.endingTone(t);

@@ -18,6 +18,7 @@ import {
   rgba,
   disc,
   makeCanvas,
+  hash1,
 } from './util.js';
 
 const CONFIGS = [
@@ -158,6 +159,60 @@ const CONFIGS = [
       [2060, 245], [2140, 236], [2220, 222], [2290, 210],
       [2340, 208], [2700, 208],
     ],
+    memories: [],
+  },
+  {
+    id: 'mainland',
+    numeral: 'VII',
+    name: 'THE MAINLAND DESERT',
+    theme: 'mainland',
+    width: 3400,
+    seed: 3371,
+    spawnX: 42,
+    exitX: 3330,
+    hostile: true,
+    amp: 2.2,
+    points: [
+      [0, 238], [360, 226], [760, 240], [1160, 224], [1560, 236],
+      [1960, 222], [2360, 238], [2760, 228], [3000, 232], [3400, 230],
+    ],
+    dogs: [
+      { x: 470, home: 470 },
+      { x: 610, home: 610 },
+      { x: 1210, home: 1210 },
+      { x: 1760, home: 1760 },
+      { x: 2310, home: 2310 },
+      { x: 2600, home: 2600 },
+    ],
+    boss: { x: 3170, triggerX: 2860, arenaMin: 2760, arenaMax: 3340 },
+    memories: [],
+  },
+  {
+    id: 'cliffs',
+    numeral: 'VIII',
+    name: 'THE GREEN CLIFFS',
+    theme: 'cliffs',
+    width: 3600,
+    seed: 4493,
+    spawnX: 42,
+    exitX: 3520,
+    cliffs: true,
+    amp: 0.6,
+    points: [
+      [0, 214], [820, 212], [1020, 204], [1900, 204],
+      [2140, 216], [2900, 216], [3140, 208], [3600, 206],
+    ],
+    gaps: [
+      { x: 820, w: 200 },
+      { x: 1900, w: 240 },
+      { x: 2900, w: 240 },
+    ],
+    bridges: [
+      { x: 800, w: 240, whale: false },
+      { x: 1870, w: 300, whale: true },
+      { x: 2880, w: 280, whale: false },
+    ],
+    whaleBridge: 1,
     memories: [],
   },
 ];
@@ -415,6 +470,60 @@ function cairn(g, x, baseY, rng) {
   }
 }
 
+// A saguaro, drawn tall and a little crooked. The desert is full of them,
+// and a few of the oldest ones are solid enough to stand on.
+function cactus(g, x, baseY, h, rng, opts = {}) {
+  const color = opts.color || '#315b42';
+  const dark = opts.dark || '#1d3b2b';
+  const light = opts.light || '#4d7c58';
+  const w = Math.max(2, Math.round(h * (opts.width || 0.12)));
+  const lean = (rng() - 0.5) * 1.8;
+  const top = baseY - h;
+
+  for (let y = 0; y < h; y++) {
+    const k = y / h;
+    const ww = Math.max(2, Math.round(w * (1 - k * 0.18)));
+    const cx = x + lean * k;
+    rect(g, cx - ww / 2, baseY - y, ww, 1, color);
+    rect(g, cx + ww / 2 - 1, baseY - y, 1, 1, light);
+    if (y % 3 === 0) rect(g, cx - ww / 2, baseY - y, 1, 1, dark);
+  }
+  // vertical ribs
+  for (let y = 4; y < h - 3; y += 4) {
+    const ww = Math.max(2, Math.round(w * (1 - (y / h) * 0.18)));
+    rect(g, x + lean * (y / h) - ww / 2 + 1, baseY - y, 1, 2, dark);
+  }
+
+  const arm = (side, at, out, up) => {
+    for (let i = 0; i < out; i++) {
+      rect(g, x + side * i, baseY - at, 2, 1, color);
+      if (i % 4 === 0) rect(g, x + side * i, baseY - at, 1, 1, dark);
+    }
+    for (let i = 0; i < up; i++) {
+      rect(g, x + side * out, baseY - at - i, 2, 1, color);
+      rect(g, x + side * out + 1, baseY - at - i, 1, 1, light);
+    }
+    rect(g, x + side * out, baseY - at - up, 2, 1, light);
+  };
+
+  const arms = opts.arms ?? (h > 14 ? 2 : 1);
+  if (arms > 0) arm(-1, h * 0.58, 3 + Math.round(h * 0.13), 4 + Math.round(h * 0.15));
+  if (arms > 1) arm(1, h * 0.72, 3 + Math.round(h * 0.11), 3 + Math.round(h * 0.12));
+  if (arms > 2) arm(-1, h * 0.4, 2 + Math.round(h * 0.1), 3 + Math.round(h * 0.1));
+
+  // spines and a small flower at the crown
+  for (let i = 0; i < h * 0.45; i++) {
+    const side = rng() < 0.5 ? -1 : 1;
+    const yy = baseY - Math.floor(rng() * h * 0.78);
+    rect(g, x + side * (w / 2 + 1) + lean * ((baseY - yy) / h), yy, 1, 1, '#9dad78');
+  }
+  if (opts.flower !== false && rng() < 0.5) {
+    rect(g, x - 1, top - 1, 3, 2, '#e8c86a');
+    rect(g, x, top - 2, 1, 1, '#f4e2a5');
+  }
+  return top;
+}
+
 // ---------- terrain painters ----------------------------------------------
 
 function paintForest(level, g, rng) {
@@ -602,6 +711,232 @@ function paintDesert(level, g, rng) {
     const gy = R(groundAt(level, m.x));
     rect(g, m.x - 4, gy - 1, 8, 1, '#d9caa9');
     rect(g, m.x - 2, gy - 2, 4, 1, '#e8dcc0');
+  }
+}
+
+function paintMainland(level, g, rng) {
+  const { width, ground } = level;
+  // The first mainland is a hard, red desert: sun-cured earth, dry air,
+  // and a horizon that keeps its distance.
+  for (let x = 0; x < width; x++) {
+    const gy = R(ground[x]);
+    rect(g, x, gy, 1, 2, '#f1d39b');
+    rect(g, x, gy + 2, 1, 3, '#dfb170');
+    rect(g, x, gy + 5, 1, 6, '#c48752');
+    rect(g, x, gy + 11, 1, 12, '#9d5c3b');
+    rect(g, x, gy + 23, 1, Math.max(1, H - gy - 23), '#5b3026');
+  }
+  // wind-cut ripples in the sand
+  for (let k = 1; k < 10; k++) {
+    const depth = k * k * 0.85 + 3;
+    for (let x = 0; x < width; x++) {
+      const gy = R(ground[x]);
+      const y = gy + depth + Math.sin(x * 0.06 + k * 1.6) * 1.4;
+      if (y > H) continue;
+      g.fillStyle = k < 3 ? 'rgba(255,238,190,0.16)' : 'rgba(78,38,28,0.18)';
+      g.fillRect(x, R(y), 1, 1);
+    }
+  }
+  for (let i = 0; i < width * 0.65; i++) {
+    const x = rng() * width;
+    const gy = R(ground[x | 0]);
+    rect(g, x, gy + 2 + rng() * 38, 1, 1, pick(rng, ['#f6e0b0', '#b87548', '#d6a064', '#733d2e']));
+  }
+
+  // cacti, old and spiny. A few are solid enough to jump on.
+  const cacti = [500, 930, 1320, 1630, 2050, 2390, 2660, 2920];
+  for (let i = 0; i < cacti.length; i++) {
+    const x = cacti[i];
+    const gy = R(groundAt(level, x));
+    const h = randInt(rng, 13, 18);
+    cactus(g, x, gy, h, rng, { arms: i % 3 === 0 ? 3 : 2 });
+    if (h >= 15) {
+      level.solids.push({ x: x - 4, y: gy - h, w: 8, h });
+    }
+  }
+  for (let i = 0; i < 22; i++) {
+    const x = rand(rng, 30, width - 30);
+    const gy = R(groundAt(level, x));
+    cactus(g, x, gy, rand(rng, 5, 11), rng, { arms: 1, flower: false });
+  }
+
+  // dry brush, stones, and the ribs of something that did not last
+  for (let i = 0; i < 34; i++) {
+    const x = rand(rng, 20, width - 20);
+    const gy = R(groundAt(level, x));
+    const col = pick(rng, ['#7b4b31', '#94603c', '#5e3929']);
+    for (let k = 0; k < 4; k++) {
+      const dx = (k - 2) * 2;
+      for (let y = 0; y < 4; y++) rect(g, x + dx + y * 0.55, gy - y - 1, 1, 1, col);
+    }
+  }
+  for (let i = 0; i < 24; i++) {
+    const x = rand(rng, 20, width - 20);
+    const gy = R(groundAt(level, x));
+    const w = randInt(rng, 3, 8);
+    rect(g, x, gy - 1, w, 1, '#8a5136');
+    rect(g, x + 1, gy - 2, Math.max(1, w - 3), 1, '#b8754d');
+  }
+  bones(g, 1240, R(groundAt(level, 1240)), rng);
+  bones(g, 2230, R(groundAt(level, 2230)), rng);
+
+  // the scorpion's arena: a cracked ring of old stones, and claw marks
+  if (level.boss) {
+    const ax = level.boss.x;
+    const ay = R(groundAt(level, ax));
+    for (let i = 0; i < 70; i++) {
+      const a = (i / 70) * Math.PI * 2;
+      const rx = ax + Math.cos(a) * rand(rng, 78, 108);
+      const ry = ay + Math.sin(a) * 5;
+      rect(g, rx, ry - rand(rng, 1, 3), rand(rng, 1, 3), 2, '#573128');
+    }
+    for (let i = 0; i < 5; i++) {
+      const sx = ax - 100 + i * 48;
+      const sy = R(groundAt(level, sx));
+      const sh = randInt(rng, 5, 10);
+      rect(g, sx, sy - sh, 7, sh, '#3a2421');
+      rect(g, sx, sy - sh, 7, 1, '#8a5a40');
+    }
+    g.strokeStyle = 'rgba(61,28,22,0.65)';
+    g.lineWidth = 1;
+    for (let i = 0; i < 5; i++) {
+      const cx = ax - 70 + i * 26;
+      const cy = ay - 1;
+      g.beginPath();
+      g.moveTo(cx, cy);
+      for (let k = 0; k < 4; k++) {
+        g.lineTo(cx + k * 6 + rand(rng, -2, 2), cy - 2 - k * 2);
+      }
+      g.stroke();
+    }
+  }
+
+  // memory markers
+  for (const m of level.memories) {
+    const gy = R(groundAt(level, m.x));
+    rect(g, m.x - 4, gy - 1, 8, 1, '#e4bf82');
+    rect(g, m.x - 2, gy - 2, 4, 1, '#f2d9a4');
+  }
+}
+
+function paintCliffs(level, g, rng) {
+  const { width, ground } = level;
+  const gapAt = (x) => level.gaps.some((gap) => x >= gap.x && x < gap.x + gap.w);
+
+  for (let x = 0; x < width; x++) {
+    const gy = R(ground[x]);
+    if (gapAt(x)) {
+      // the cut between two cliffs: dark air, cold water a long way down
+      for (let y = 154; y < H; y++) {
+        const t = (y - 154) / Math.max(1, H - 154);
+        g.fillStyle = mix('#102b2b', '#041014', clamp(t * 1.25, 0, 1));
+        g.fillRect(x, y, 1, 1);
+      }
+      if (gy < H + 20) {
+        g.fillStyle = 'rgba(154,196,180,0.09)';
+        g.fillRect(x, 218 + Math.round(Math.sin(x * 0.09) * 7), 1, 1);
+      }
+      continue;
+    }
+
+    // green crown, then a stratified cliff face dropping out of sight
+    rect(g, x, gy, 1, 2, '#b7d58a');
+    rect(g, x, gy + 2, 1, 3, '#6f9d5d');
+    rect(g, x, gy + 5, 1, 4, '#416b46');
+    rect(g, x, gy + 9, 1, 8, '#425c4b');
+    rect(g, x, gy + 17, 1, 13, '#35463e');
+    rect(g, x, gy + 30, 1, Math.max(1, H - gy - 30), '#202e2d');
+    if (hash1(x * 3.1) > 0.68) {
+      rect(g, x, gy + 12 + Math.floor(hash1(x * 7.7) * 34), 1, 1, '#778b70');
+    }
+    // roots and vines spilling over the lip
+    if (hash1(x * 1.7) > 0.82) {
+      const len = 4 + Math.floor(hash1(x * 5.3) * 24);
+      for (let k = 0; k < len; k++) {
+        rect(g, x + Math.round(Math.sin(k * 0.4 + x) * 1.2), gy + 3 + k, 1, 1, k < 3 ? '#8db06b' : '#3d6647');
+      }
+    }
+  }
+
+  // the chasm breathes a pale mist up against the cliff walls
+  for (let y = 204; y < 250; y++) {
+    const a = 0.018 + Math.sin(((y - 204) / 46) * Math.PI) * 0.04;
+    g.fillStyle = `rgba(172,208,188,${a})`;
+    g.fillRect(0, y, width, 1);
+  }
+
+  // ferns and little flowering bushes on the cliff tops
+  for (let i = 0; i < 130; i++) {
+    const x = rand(rng, 16, width - 16);
+    if (gapAt(x)) continue;
+    const gy = R(groundAt(level, x));
+    const len = randInt(rng, 3, 8);
+    const dir = rng() < 0.5 ? -1 : 1;
+    g.fillStyle = pick(rng, ['#315b3d', '#477a4e', '#24462f']);
+    for (let k = 0; k < len; k++) {
+      g.fillRect(R(x + dir * k * 0.8), R(gy - Math.sin((k / len) * Math.PI) * len * 0.8), 1, 1);
+    }
+    if (rng() < 0.18) rect(g, x, gy - len - 1, 1, 1, '#e8d68a');
+  }
+  // a few crooked trees, further back
+  for (let i = 0; i < 16; i++) {
+    const x = rand(rng, 40, width - 40);
+    if (gapAt(x)) continue;
+    const gy = R(groundAt(level, x));
+    treeSilhouette(g, x, gy, rand(rng, 14, 24), 'rgba(22,48,33,0.76)', rng, 0.85);
+  }
+
+  // the bridges: old planks, rope rails, and a little moss
+  for (const b of level.bridges) {
+    const y = b.y - 2;
+    // posts dropping into the cut
+    for (const px of [b.x + 8, b.x + b.w - 12, b.x + Math.round(b.w * 0.5)]) {
+      rect(g, px, y, 2, H - y, '#253b2e');
+      rect(g, px, y, 2, 1, '#66845e');
+    }
+    for (let i = 0; i < b.w; i++) {
+      const x = b.x + i;
+      const plank = i % 9 === 0 ? '#4d5c3d' : i % 13 === 0 ? '#68744c' : '#5b6745';
+      rect(g, x, y, 1, 5, plank);
+      if (i % 9 === 0) rect(g, x, y, 1, 5, '#2f3827');
+      if (i % 4 === 0) rect(g, x, y + 5, 1, 1, '#1e2a23');
+      if (i % 17 === 0) rect(g, x, y + 1, 1, 1, '#8aa06a');
+    }
+    rect(g, b.x, y, b.w, 1, '#a2b17c');
+    // rope rails, sagging under their own weight
+    g.strokeStyle = 'rgba(189,198,152,0.52)';
+    g.lineWidth = 1;
+    g.beginPath();
+    for (let i = 0; i <= b.w; i += 2) {
+      const x = b.x + i;
+      const ry = y - 11 + Math.sin((i / b.w) * Math.PI) * 3;
+      if (i === 0) g.moveTo(x, ry);
+      else g.lineTo(x, ry);
+    }
+    g.stroke();
+    for (let px = b.x + 7; px < b.x + b.w; px += 34) {
+      rect(g, px, y - 13, 1, 13, '#354b36');
+      rect(g, px, y - 14, 1, 1, '#7f9467');
+    }
+    if (b.whale) {
+      // an old whale carved into the rail, a warning or a welcome
+      g.fillStyle = 'rgba(222,229,185,0.7)';
+      const cx = b.x + b.w * 0.5;
+      for (let i = 0; i < 18; i++) {
+        const k = i / 17;
+        const yy = y - 15 - Math.sin(k * Math.PI) * 5;
+        g.fillRect(Math.round(cx - 9 + i), Math.round(yy), 1, 3);
+      }
+      g.fillRect(Math.round(cx + 8), Math.round(y - 20), 3, 1);
+      g.fillRect(Math.round(cx + 10), Math.round(y - 21), 1, 2);
+    }
+  }
+
+  // memory markers
+  for (const m of level.memories) {
+    const gy = R(groundAt(level, m.x));
+    rect(g, m.x - 3, gy - 1, 6, 1, '#9cae7c');
+    rect(g, m.x - 1, gy - 2, 2, 1, '#d5e2b3');
   }
 }
 
@@ -1114,6 +1449,8 @@ function paintTerrain(level, g, rng) {
   switch (level.theme) {
     case 'forest': paintForest(level, g, rng); break;
     case 'desert': paintDesert(level, g, rng); break;
+    case 'mainland': paintMainland(level, g, rng); break;
+    case 'cliffs': paintCliffs(level, g, rng); break;
     case 'mountain': paintMountain(level, g, rng); break;
     case 'city': paintCity(level, g, rng); break;
     case 'port': paintPort(level, g, rng); break;
@@ -1300,6 +1637,174 @@ function buildDesertLayers(level) {
       const x = rng() * w;
       const y = 222 + Math.sin(x * 0.0095) * 13;
       branch(g, x, y, -1.5, 6, 1, 'rgba(116,92,70,0.5)', rng, 0);
+    }
+  });
+
+  return [far, mid];
+}
+
+function buildMainlandLayers(level) {
+  const far = layerCanvas(level, 0.08, level.seed + 131, (g, w, h, rng) => {
+    for (let y = 0; y < h; y++) {
+      const t = y / h;
+      g.fillStyle = t < 0.56
+        ? mix('#17192f', '#5b3c4a', Math.pow(t / 0.56, 1.3))
+        : mix('#5b3c4a', '#d98b58', Math.pow((t - 0.56) / 0.44, 0.85));
+      g.fillRect(0, y, w, 1);
+    }
+    // a low, red sun that has not moved in years
+    const sx = Math.min(w - 90, 238);
+    const sy = 96;
+    g.save();
+    g.globalCompositeOperation = 'lighter';
+    for (let r = 110; r > 18; r -= 5) disc(g, sx, sy, r, 'rgba(255,180,120,0.012)');
+    g.restore();
+    disc(g, sx, sy, 20, '#f6c786');
+    disc(g, sx, sy, 16, '#ffe1aa');
+    for (let y = 92; y < 190; y++) {
+      const a = Math.sin(((y - 92) / 98) * Math.PI) * 0.13;
+      g.fillStyle = `rgba(255,208,166,${a})`;
+      g.fillRect(0, y, w, 1);
+    }
+    // flat-topped mesas, one ridge behind another
+    for (let pass = 0; pass < 3; pass++) {
+      const base = 190 - pass * 8;
+      const col = ['#472f36', '#3b2730', '#2e1f28'][pass];
+      let x = -20;
+      while (x < w + 20) {
+        const bw = randInt(rng, 46, 130);
+        const bh = rand(rng, 10, 30) - pass * 2;
+        const top = base - bh;
+        g.fillStyle = col;
+        g.fillRect(R(x), R(top), bw, R(base - top));
+        // a lit rim on the sunward edge
+        g.fillStyle = 'rgba(226,164,112,0.28)';
+        g.fillRect(R(x), R(top), bw, 1);
+        g.fillRect(R(x), R(top), 1, R(base - top));
+        x += bw + randInt(rng, 8, 42);
+      }
+    }
+    // low dust, lying flat across the whole horizon
+    for (let y = 172; y < h; y++) {
+      const a = clamp((y - 172) / 70, 0, 1) * 0.3;
+      g.fillStyle = `rgba(214,146,104,${a})`;
+      g.fillRect(0, y, w, 1);
+    }
+  });
+
+  const mid = layerCanvas(level, 0.27, level.seed + 149, (g, w, h, rng) => {
+    const base = 218;
+    for (let x = 0; x < w; x++) {
+      const y = base + Math.sin(x * 0.011) * 5 + Math.sin(x * 0.031) * 2;
+      g.fillStyle = '#2b1c1f';
+      g.fillRect(x, R(y), 1, h - R(y));
+      g.fillStyle = 'rgba(202,136,92,0.32)';
+      g.fillRect(x, R(y), 1, 1);
+    }
+    // a broken ridge of mesas behind the walking plane
+    let x = -30;
+    while (x < w + 30) {
+      const bw = randInt(rng, 54, 140);
+      const bh = rand(rng, 10, 34);
+      const top = base - bh;
+      g.fillStyle = '#24171c';
+      g.fillRect(R(x), R(top), bw, R(base - top));
+      g.fillStyle = 'rgba(194,122,82,0.28)';
+      g.fillRect(R(x), R(top), bw, 1);
+      x += bw + randInt(rng, 15, 50);
+    }
+    // the silhouettes of cacti, far enough back to be only shapes
+    for (let i = 0; i < w / 90; i++) {
+      const cx = rng() * w;
+      const cy = base + Math.sin(cx * 0.011) * 5;
+      cactus(g, cx, cy, rand(rng, 6, 14), rng, {
+        color: '#1b1318', dark: '#120d11', light: 'rgba(168,112,80,0.35)', arms: 2, flower: false,
+      });
+    }
+    for (let y = 200; y < h; y++) {
+      const a = clamp((y - 200) / 80, 0, 1) * 0.42;
+      g.fillStyle = `rgba(24,13,16,${a})`;
+      g.fillRect(0, y, w, 1);
+    }
+  });
+
+  return [far, mid];
+}
+
+function buildCliffsLayers(level) {
+  const far = layerCanvas(level, 0.08, level.seed + 163, (g, w, h, rng) => {
+    for (let y = 0; y < h; y++) {
+      const t = y / h;
+      g.fillStyle = t < 0.6
+        ? mix('#0b1d24', '#3e655e', Math.pow(t / 0.6, 1.1))
+        : mix('#3e655e', '#9fbea5', Math.pow((t - 0.6) / 0.4, 0.9));
+      g.fillRect(0, y, w, 1);
+    }
+    // a pale, cloud-bruised sun over the far valley
+    g.save();
+    g.globalCompositeOperation = 'lighter';
+    for (let r = 90; r > 12; r -= 5) disc(g, w * 0.72, 64, r, 'rgba(208,232,206,0.01)');
+    g.restore();
+    disc(g, w * 0.72, 64, 15, '#dce7ce');
+    disc(g, w * 0.72 - 3, 61, 11, '#edf4de');
+    // long cloud bars
+    for (let i = 0; i < 40; i++) {
+      const cx = rng() * w;
+      const cy = 18 + rng() * 112;
+      const cw = 30 + rng() * 90;
+      g.fillStyle = `rgba(116,150,140,${0.06 + rng() * 0.15})`;
+      g.fillRect(R(cx), R(cy), R(cw), 1 + Math.round(rng() * 2));
+    }
+    // distant cliff walls, hazy and green
+    for (let pass = 0; pass < 2; pass++) {
+      const base = 204 - pass * 8;
+      const col = pass === 0 ? 'rgba(71,104,89,0.62)' : 'rgba(50,80,68,0.76)';
+      let x = -30;
+      while (x < w + 30) {
+        const bw = randInt(rng, 70, 160);
+        const bh = rand(rng, 22, 62);
+        const top = base - bh;
+        g.fillStyle = col;
+        g.fillRect(R(x), R(top), bw, R(base - top));
+        g.fillStyle = 'rgba(185,214,181,0.18)';
+        g.fillRect(R(x), R(top), bw, 1);
+        x += bw + randInt(rng, 20, 60);
+      }
+    }
+    for (let y = 170; y < h; y++) {
+      const a = clamp((y - 170) / 90, 0, 1) * 0.34;
+      g.fillStyle = `rgba(133,171,154,${a})`;
+      g.fillRect(0, y, w, 1);
+    }
+  });
+
+  const mid = layerCanvas(level, 0.28, level.seed + 179, (g, w, h, rng) => {
+    const base = 224;
+    for (let x = 0; x < w; x++) {
+      g.fillStyle = '#0d2525';
+      g.fillRect(x, base, 1, h - base);
+    }
+    // nearer cliff shoulders, dropping into the cut
+    let x = -40;
+    while (x < w + 40) {
+      const bw = randInt(rng, 70, 180);
+      const bh = rand(rng, 24, 70);
+      const top = base - bh;
+      g.fillStyle = '#183a31';
+      g.fillRect(R(x), R(top), bw, R(base - top));
+      g.fillStyle = 'rgba(160,196,148,0.26)';
+      g.fillRect(R(x), R(top), bw, 1);
+      for (let k = 0; k < 4; k++) {
+        g.fillStyle = 'rgba(94,128,100,0.1)';
+        g.fillRect(R(x + rng() * bw), R(top + 4 + rng() * bh), 1, randInt(rng, 2, 8));
+      }
+      x += bw + randInt(rng, 12, 44);
+    }
+    // mist sitting in the gap, dense enough to hide the bottom
+    for (let y = 206; y < h; y++) {
+      const a = clamp((y - 206) / 54, 0, 1) * 0.55;
+      g.fillStyle = `rgba(92,132,118,${a})`;
+      g.fillRect(0, y, w, 1);
     }
   });
 
@@ -1844,9 +2349,28 @@ function buildFromConfig(cfg, index) {
     teens: cfg.story ? CITY_TEENS.map((t) => ({ ...t })) : null,
     lookoutX: cfg.lookoutX ?? null,
     ship: !!cfg.ship,
+    hostile: !!cfg.hostile,
+    dogs: (cfg.dogs || []).map((d) => ({ ...d })),
+    boss: cfg.boss ? { ...cfg.boss } : null,
+    cliffs: !!cfg.cliffs,
+    gaps: (cfg.gaps || []).map((gap) => ({ ...gap })),
+    bridges: (cfg.bridges || []).map((bridge) => ({ ...bridge })),
+    whaleBridge: cfg.whaleBridge ?? null,
   };
   for (const m of level.memories) m.y = groundAt(level, m.x) - 25;
   if (level.power) level.power.y = groundAt(level, level.power.x);
+
+  if (level.cliffs) {
+    // The bridge decks sit level with the cliff edge. Work out their height
+    // before the gaps are cut down into the chasm below the screen.
+    for (const bridge of level.bridges) bridge.y = groundAt(level, bridge.x + 2);
+    for (const gap of level.gaps) {
+      for (let x = gap.x; x < gap.x + gap.w; x++) level.ground[x] = H + 70;
+    }
+    for (const bridge of level.bridges) {
+      level.solids.push({ x: bridge.x, y: bridge.y - 2, w: bridge.w, h: 6 });
+    }
+  }
 
   const canvas = makeCanvas(cfg.width, H);
   const g = canvas.getContext('2d');
@@ -1857,6 +2381,8 @@ function buildFromConfig(cfg, index) {
   switch (level.theme) {
     case 'forest': level.layers = buildForestLayers(level); break;
     case 'desert': level.layers = buildDesertLayers(level); break;
+    case 'mainland': level.layers = buildMainlandLayers(level); break;
+    case 'cliffs': level.layers = buildCliffsLayers(level); break;
     case 'mountain': level.layers = buildMountainLayers(level); break;
     case 'city': level.layers = buildCityLayers(level); break;
     case 'port': level.layers = buildPortLayers(level); break;

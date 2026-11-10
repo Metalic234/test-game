@@ -502,6 +502,261 @@ export function drawWisp(g, x, y, t, color, found) {
   });
 }
 
+// A black dog of the mainland: low, lean, and made almost entirely of shadow.
+// The only bright thing about it is the pair of red eyes.
+export function drawDog(g, cx, baseY, t, opts = {}) {
+  const scale = opts.scale || 1;
+  const facing = opts.facing || -1;
+  const flash = opts.flash || 0;
+  const run = opts.run || 0;
+  const alpha = opts.alpha ?? 1;
+
+  g.save();
+  g.globalAlpha = alpha;
+  g.translate(Math.round(cx), Math.round(baseY));
+  g.scale(facing * scale, scale);
+
+  // a dark pocket under it so the legs do not disappear into the sand
+  g.fillStyle = 'rgba(8,5,7,0.4)';
+  g.beginPath();
+  g.ellipse(0, 0, 18, 3, 0, 0, TAU);
+  g.fill();
+
+  // tail, curled up and back
+  g.strokeStyle = '#09070b';
+  g.lineWidth = 2;
+  g.beginPath();
+  g.moveTo(-15, -11);
+  g.quadraticCurveTo(-23, -15, -21, -24 + Math.sin(t * 3 + run) * 2);
+  g.stroke();
+
+  // four legs, with a little trot
+  for (let i = 0; i < 4; i++) {
+    const lx = -11 + i * 7;
+    const swing = Math.sin(t * 7 + i * 1.7 + run) * (opts.moving ? 2.2 : 0.7);
+    g.fillStyle = '#08070a';
+    g.fillRect(lx + swing * 0.4, -6, 2, 7 + (i % 2));
+    g.fillRect(lx + swing, -1, 3, 1);
+  }
+
+  // body and shoulders
+  g.fillStyle = '#08070b';
+  g.beginPath();
+  g.moveTo(-17, -13);
+  g.quadraticCurveTo(-8, -18, 5, -15);
+  g.quadraticCurveTo(12, -15, 14, -11);
+  g.lineTo(10, -5);
+  g.quadraticCurveTo(-3, -3, -15, -7);
+  g.closePath();
+  g.fill();
+  g.fillStyle = '#17121a';
+  g.fillRect(-15, -15, 24, 1);
+  for (let i = 0; i < 5; i++) {
+    const sx = -13 + i * 5;
+    g.fillRect(sx, -17 - (i % 2), 2, 2);
+  }
+
+  // head, ears, long snout
+  g.fillStyle = '#09080c';
+  g.beginPath();
+  g.moveTo(8, -16);
+  g.lineTo(15, -18);
+  g.lineTo(14, -8);
+  g.lineTo(8, -6);
+  g.closePath();
+  g.fill();
+  g.fillRect(14, -12, 8, 5);
+  g.fillRect(21, -9, 3, 2);
+  g.beginPath();
+  g.moveTo(9, -16);
+  g.lineTo(8, -22);
+  g.lineTo(12, -18);
+  g.closePath();
+  g.fill();
+  g.beginPath();
+  g.moveTo(14, -17);
+  g.lineTo(16, -21);
+  g.lineTo(18, -16);
+  g.closePath();
+  g.fill();
+  // teeth, barely there
+  g.fillStyle = '#b9b2a8';
+  g.fillRect(18, -7, 1, 1);
+  g.fillRect(21, -8, 1, 1);
+
+  // red eyes and their glow
+  g.save();
+  g.globalCompositeOperation = 'lighter';
+  glow(g, 13, -14, 7, '#ff3b30', 0.5);
+  glow(g, 17, -14, 6, '#ff3b30', 0.4);
+  g.restore();
+  g.fillStyle = '#ff5a45';
+  g.fillRect(13, -15, 2, 1);
+  g.fillRect(17, -15, 1, 1);
+
+  // smoke peeling off its back
+  g.save();
+  g.globalCompositeOperation = 'source-over';
+  for (let i = 0; i < 3; i++) {
+    const ph = (t * 0.55 + i * 0.31 + run) % 1;
+    g.fillStyle = `rgba(8,6,10,${(1 - ph) * 0.45})`;
+    g.fillRect(-8 + i * 7, -20 - ph * 13, 2 + (i % 2), 1);
+  }
+  g.restore();
+
+  if (flash > 0) {
+    g.globalCompositeOperation = 'lighter';
+    g.globalAlpha = flash * 0.55;
+    g.fillStyle = '#ffffff';
+    g.fillRect(-17, -22, 39, 22);
+  }
+  g.restore();
+}
+
+// The desert's last keeper: broad, low, and older than the road.
+export function drawScorpion(g, cx, baseY, t, opts = {}) {
+  const scale = opts.scale || 1;
+  const facing = opts.facing || -1;
+  const flash = opts.flash || 0;
+  const stomp = opts.stomp || 0;
+  const sting = opts.sting || 0;
+  const claw = opts.claw || 0;
+
+  g.save();
+  g.translate(Math.round(cx), Math.round(baseY));
+  g.scale(facing * scale, scale);
+
+  // shadow and dust
+  g.fillStyle = 'rgba(14,8,8,0.55)';
+  g.beginPath();
+  g.ellipse(0, 0, 46, 6, 0, 0, TAU);
+  g.fill();
+
+  // eight legs, jointed and scraping at the ground
+  g.strokeStyle = '#1c1412';
+  g.lineWidth = 3;
+  for (let side = -1; side <= 1; side += 2) {
+    for (let i = 0; i < 4; i++) {
+      const sway = Math.sin(t * 4.2 + i * 1.4 + side) * 2;
+      const rootX = -18 + i * 10;
+      const kneeX = rootX + side * 13 + sway;
+      const footX = rootX + side * 25 + sway * 1.5;
+      g.beginPath();
+      g.moveTo(rootX, -17);
+      g.lineTo(kneeX, -10);
+      g.lineTo(footX, -1);
+      g.stroke();
+      g.fillStyle = '#120d0d';
+      g.fillRect(Math.round(footX) - 1, -2, 3, 2);
+    }
+  }
+
+  // tail, curling up and over the back
+  const tailBase = -27;
+  const tailTipY = -62 + Math.sin(t * 2.4) * 2 - stomp * 4;
+  g.strokeStyle = '#1b1210';
+  g.lineWidth = 7;
+  g.beginPath();
+  g.moveTo(tailBase, -20);
+  g.quadraticCurveTo(-50, -30, -42, -49);
+  g.quadraticCurveTo(-26, -70, -12, tailTipY);
+  g.stroke();
+  g.strokeStyle = '#33221a';
+  g.lineWidth = 3;
+  g.beginPath();
+  g.moveTo(tailBase, -21);
+  g.quadraticCurveTo(-47, -31, -40, -49);
+  g.quadraticCurveTo(-25, -67, -13, tailTipY + 2);
+  g.stroke();
+  // the stinger
+  g.fillStyle = '#0b090c';
+  g.beginPath();
+  g.moveTo(-14, tailTipY + 2);
+  g.lineTo(-2, tailTipY + 14);
+  g.lineTo(-17, tailTipY + 8);
+  g.closePath();
+  g.fill();
+  if (sting > 0) {
+    g.save();
+    g.globalCompositeOperation = 'lighter';
+    glow(g, -8, tailTipY + 10, 18, '#ff7a3c', 0.55 * sting);
+    g.restore();
+  }
+
+  // abdomen and head-plate
+  g.fillStyle = '#241816';
+  g.beginPath();
+  g.ellipse(-8, -19, 25, 13, 0, 0, TAU);
+  g.fill();
+  g.fillStyle = '#34221c';
+  g.beginPath();
+  g.ellipse(-8, -24, 22, 8, 0, 0, TAU);
+  g.fill();
+  for (let i = 0; i < 5; i++) {
+    g.fillStyle = i % 2 ? '#4a3022' : '#2d1d18';
+    g.fillRect(-25 + i * 8, -29 + (i % 2), 5, 2);
+  }
+  g.fillStyle = '#2c1c18';
+  g.beginPath();
+  g.ellipse(13, -18, 16, 11, 0, 0, TAU);
+  g.fill();
+
+  // claws, each with a hinge and two fingers
+  for (const side of [-1, 1]) {
+    const armX = 20;
+    const armY = -20 + side * 3;
+    const open = claw > 0 ? 4 : 1;
+    g.strokeStyle = '#241713';
+    g.lineWidth = 5;
+    g.beginPath();
+    g.moveTo(armX - 2, armY);
+    g.lineTo(armX + 15, armY - 8 + side * 3);
+    g.stroke();
+    g.fillStyle = '#2f1d17';
+    g.beginPath();
+    g.ellipse(armX + 19, armY - 9 + side * 3, 10, 7, 0.3 * side, 0, TAU);
+    g.fill();
+    g.fillStyle = '#130e0d';
+    g.beginPath();
+    g.moveTo(armX + 26, armY - 12 + side * 3);
+    g.lineTo(armX + 35, armY - 15 + side * 3 - open);
+    g.lineTo(armX + 28, armY - 6 + side * 3);
+    g.closePath();
+    g.fill();
+    g.beginPath();
+    g.moveTo(armX + 27, armY - 8 + side * 3);
+    g.lineTo(armX + 35, armY - 3 + side * 3 + open);
+    g.lineTo(armX + 26, armY - 5 + side * 3);
+    g.closePath();
+    g.fill();
+    g.fillStyle = '#7a4a2a';
+    g.fillRect(armX + 16, armY - 12 + side * 3, 4, 1);
+  }
+
+  // eyes, a row of small red points
+  g.save();
+  g.globalCompositeOperation = 'lighter';
+  glow(g, 22, -21, 12, '#ff4a32', 0.45);
+  g.restore();
+  g.fillStyle = '#ff6a45';
+  g.fillRect(19, -22, 2, 1);
+  g.fillRect(23, -23, 1, 1);
+  g.fillRect(26, -21, 1, 1);
+
+  // plates catching the last light
+  g.fillStyle = 'rgba(204,126,74,0.35)';
+  g.fillRect(-22, -28, 13, 1);
+  g.fillRect(7, -24, 10, 1);
+
+  if (flash > 0) {
+    g.globalCompositeOperation = 'lighter';
+    g.globalAlpha = flash * 0.45;
+    g.fillStyle = '#ffffff';
+    g.fillRect(-48, -70, 94, 70);
+  }
+  g.restore();
+}
+
 // Small floating dust / firefly sprite drawn directly.
 export function drawMote(g, x, y, color, size = 1, alpha = 1) {
   g.save();

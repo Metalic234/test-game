@@ -4,7 +4,7 @@ import {
   W, H, TAU, clamp, lerp, damp, rgba, mix, vgrad, glow, disc, makeCanvas, hash1,
 } from './util.js';
 import { drawText, wrapText, textWidth } from './font.js';
-import { GIRL, GIRL_SIT, drawGuardian, drawWisp, drawTeen, drawShield } from './sprites.js';
+import { GIRL, GIRL_SIT, drawGuardian, drawWisp, drawTeen, drawShield, drawDog, drawScorpion } from './sprites.js';
 import { buildLevel, buildCityScene, groundAt, TOTAL_MEMORIES, LEVEL_COUNT } from './levels.js';
 import { AudioEngine } from './audio.js';
 import { Input } from './input.js';
@@ -26,6 +26,8 @@ const SKY = {
   village: [[0, '#05040a'], [0.35, '#140c14'], [0.65, '#2a1116'], [1, '#4a1a14']],
   city: [[0, '#03040a'], [0.4, '#0a0f1c'], [0.72, '#161d2e'], [1, '#2c2c3e']],
   port: [[0, '#03060c'], [0.42, '#0a1521'], [0.74, '#152534'], [1, '#28394a']],
+  mainland: [[0, '#18192d'], [0.38, '#4b3546'], [0.72, '#8b5c55'], [1, '#d99a68']],
+  cliffs: [[0, '#0a1c23'], [0.4, '#2f5853'], [0.72, '#6d9581'], [1, '#b3cba9']],
 };
 
 const MIST = {
@@ -35,6 +37,8 @@ const MIST = {
   village: { color: '#a06a58', alpha: 0.05, y: 140, h: 120 },
   city: { color: '#8fa6c8', alpha: 0.045, y: 150, h: 110 },
   port: { color: '#a8c4dc', alpha: 0.055, y: 132, h: 120 },
+  mainland: { color: '#f4c28e', alpha: 0.065, y: 138, h: 112 },
+  cliffs: { color: '#b9dcc4', alpha: 0.07, y: 126, h: 126 },
 };
 
 // The three powers she can buy from the stones, and the colour of each.
@@ -50,8 +54,9 @@ const BEATS = [
   { x: 1900, line: 'HERE, ONCE, THERE WAS A ROAD.' },
   { x: 1600, line: 'THE COLD REMEMBERS HER BETTER THAN SHE DOES.' },
   { x: 880, line: 'THEY DO NOT WANT HER TO SEE THE VALLEY YET.' },
-  { x: 900, line: 'THE CITY DOES NOT SLEEP. IT WAITS.' },
   { x: 2340, line: 'THE DECK IS STILL WARM FROM THE ENGINE.' },
+  { x: 520, line: 'TWO BLACK SHAPES RISE OUT OF THE DUNES.' },
+  { x: 760, line: 'THE BRIDGE HUMPS UNDER HER FEET. SOMETHING MOVES BELOW.' },
 ];
 
 function makeVignette() {
@@ -123,6 +128,9 @@ export class Game {
     this.lookedOut = false;
     this.climbEpilogue = false;
     this.voyage = null;
+    this.combat = null;
+    this.whale = null;
+    this.whaleDone = false;
     this.bob = 0;
 
     this.cam = { x: 0, y: 0 };
@@ -178,6 +186,7 @@ export class Game {
       stepT: 0,
     };
     this.cam.x = clamp(p - W * 0.4, 0, Math.max(0, this.level.width - W));
+    this.checkpointX = p;
     this.guardians = this.makeGuardians(p);
     this.particles.length = 0;
     this.nearby = null;
@@ -193,8 +202,13 @@ export class Game {
     this.lookedOut = false;
     this.climbEpilogue = false;
     this.voyage = null;
+    this.combat = null;
+    this.whale = null;
+    this.whaleDone = false;
+    this.hintT = 0;
     this.audio.applyBiome(this.level.theme);
     this.showCard(this.level);
+    if (this.level.hostile) this.initWilds();
   }
 
   showCard(level) {
@@ -316,6 +330,11 @@ export class Game {
       return;
     }
     this.updatePlayer(dt);
+    if (this.combat) {
+      this.updateWilds(dt);
+      if (this.mode === 'ending') return;
+    }
+    this.updateWhale(dt);
     if (this.level.lookoutX && !this.lookedOut && this.player.x >= this.level.lookoutX) {
       this.beginLookout();
       return;
@@ -347,11 +366,16 @@ export class Game {
       return;
     }
     if (this.player.x >= this.level.exitX) {
+      // The scorpion's arena is a gate until the old keeper is finished.
+      if (this.combat && this.combat.boss && !this.combat.bossDefeated) {
+        this.player.x = this.level.exitX - 10;
+        return;
+      }
       // The last street does not lead anywhere: it leads to them.
       if (this.level.finale) this.beginFinale();
-      else if (this.levelIndex < LEVEL_COUNT - 1) this.beginTransition();
       else if (this.level.ship) this.beginVoyage();
-      else this.beginFinale();
+      else if (this.levelIndex < LEVEL_COUNT - 1) this.beginTransition();
+      else this.beginStoryEnding();
     }
   }
 
@@ -466,6 +490,7 @@ export class Game {
     p.y += p.vy * dt;
 
     // land on solids
+    let onSolid = false;
     for (const s of level.solids) {
       if (p.x + PW / 2 > s.x && p.x - PW / 2 < s.x + s.w) {
         if (p.vy >= 0 && p.y >= s.y && p.y <= s.y + 12) {
@@ -473,6 +498,7 @@ export class Game {
           p.vy = 0;
           p.onGround = true;
           p.airJump = true;
+          onSolid = true;
         }
       }
     }
@@ -483,6 +509,10 @@ export class Game {
       p.vy = 0;
       p.onGround = true;
       p.airJump = true;
+      if (gy < H - 40) this.checkpointX = p.x;
+    } else if (onSolid) {
+      // A bridge or rock holds her even when the chasm floor is far below.
+      p.onGround = true;
     } else if (p.onGround && p.vy >= 0 && gy - p.y < 6) {
       p.y = gy;
       p.vy = 0;
@@ -502,8 +532,10 @@ export class Game {
       }
     }
     if (p.y > H + 20) {
-      p.y = groundAt(level, level.spawnX);
-      p.x = level.spawnX;
+      p.x = this.checkpointX ?? level.spawnX;
+      p.y = groundAt(level, p.x);
+      p.vx = 0;
+      p.vy = 0;
     }
   }
 
@@ -646,11 +678,16 @@ export class Game {
   updateCamera(dt) {
     const p = this.player;
     const look = p.facing * 34;
-    const target = this.bossBattle
-      ? p.x - W * 0.24 + 28
-      : p.x - W * 0.44 + look;
+    const wildBoss = this.combat && this.combat.boss && this.combat.boss.active && this.combat.boss.alive
+      ? this.combat.boss : null;
+    const target = wildBoss
+      ? (p.x + wildBoss.x) * 0.5 - W * 0.5
+      : this.bossBattle
+        ? p.x - W * 0.24 + 28
+        : p.x - W * 0.44 + look;
     const maxX = Math.max(0, this.level.width - W);
-    this.cam.x = clamp(damp(this.cam.x, target, this.bossBattle ? 3.2 : 2.4, dt), 0, maxX);
+    const speed = wildBoss ? 2.8 : this.bossBattle ? 3.2 : 2.4;
+    this.cam.x = clamp(damp(this.cam.x, target, speed, dt), 0, maxX);
   }
 
   // ---------------------------------------------------------------- memories
@@ -1568,7 +1605,7 @@ export class Game {
   beginVoyage() {
     this.ending = null;
     this.mode = 'play';
-    this.voyage = { t: 0 };
+    this.voyage = { t: 0, next: this.levelIndex + 1 };
     this.fade = 1;
     this.fadeTarget = 0;
     this.audio.applyBiome('metal');
@@ -1583,10 +1620,511 @@ export class Game {
       this.startGame();
       return;
     }
-    if (v.t > 25 && this.input.consume('interact')) {
-      this.voyage = null;
-      this.startGame();
+    if (v.t > 25.6 && (this.input.consume('interact') || v.t > 30.5)) {
+      this.finishVoyage();
     }
+  }
+
+  initWilds() {
+    const L = this.level;
+    const dogs = (L.dogs || []).map((d, i) => ({
+      id: `dog-${i}`,
+      x: d.home ?? d.x,
+      home: d.home ?? d.x,
+      hp: 4,
+      maxHp: 4,
+      alive: true,
+      flash: 0,
+      biteCd: 0.5 + i * 0.17,
+      pause: 0,
+      dir: i % 2 ? -1 : 1,
+      moving: false,
+    }));
+    const cfg = L.boss;
+    const boss = cfg ? {
+      id: 'scorpion',
+      x: cfg.x,
+      hp: 160,
+      maxHp: 160,
+      alive: true,
+      active: false,
+      intro: 0,
+      flash: 0,
+      attackCd: 1.8,
+      stingT: 0,
+      stingMax: 0.95,
+      stingX: cfg.x,
+      stingHit: true,
+      clawT: 0,
+      clawMax: 0.55,
+      clawHit: true,
+      facing: -1,
+      stomp: 0,
+    } : null;
+    this.combat = {
+      hp: 100,
+      max: 100,
+      hurt: 0,
+      invuln: 0,
+      dogs,
+      boss,
+      bossDefeated: false,
+      bossStarted: false,
+      shards: [],
+      beamOn: false,
+      beamTick: 0,
+      beamDir: 1,
+    };
+  }
+
+  startScorpion() {
+    const c = this.combat;
+    if (!c || !c.boss || c.bossStarted) return;
+    const b = c.boss;
+    c.bossStarted = true;
+    b.active = true;
+    b.intro = 1.6;
+    b.attackCd = 1.7;
+    this.blocker = null;
+    this.card = null;
+    this.beats = [];
+    this.player.facing = 1;
+    this.audio.play('power');
+    for (let i = 0; i < 44; i++) {
+      const a = Math.random() * TAU;
+      const sp = 14 + Math.random() * 58;
+      this.spawn({
+        type: 'mote',
+        x: b.x + (Math.random() - 0.5) * 90,
+        y: groundAt(this.level, b.x) - Math.random() * 8,
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp * 0.4 - 12,
+        size: Math.random() < 0.2 ? 2 : 1,
+        color: i % 3 ? '#d4a06a' : '#f4d9a8',
+        max: 0.6 + Math.random() * 0.9,
+        grav: 42,
+        drag: 0.95,
+      });
+    }
+  }
+
+  updateWilds(dt) {
+    const c = this.combat;
+    if (!c) return;
+    const L = this.level;
+    const p = this.player;
+    c.invuln = Math.max(0, c.invuln - dt);
+    c.hurt = Math.max(0, c.hurt - dt * 2.2);
+
+    if (!c.bossStarted && c.boss && p.x >= L.boss.triggerX) this.startScorpion();
+    if (c.bossStarted && c.boss && c.boss.alive) {
+      p.x = clamp(p.x, L.boss.arenaMin, L.exitX - 10);
+    }
+
+    for (const dog of c.dogs) {
+      dog.flash = Math.max(0, dog.flash - dt * 4);
+      dog.biteCd = Math.max(0, dog.biteCd - dt);
+      if (!dog.alive) continue;
+      const gy = groundAt(L, dog.x);
+      const dx = p.x - dog.x;
+      const close = Math.abs(dx) < 190 && Math.abs(p.y - gy) < 42;
+      if (close) {
+        dog.moving = true;
+        dog.dir = Math.sign(dx) || dog.dir;
+        dog.x += dog.dir * 38 * dt;
+        if (Math.abs(dx) < 23 && Math.abs(p.y - gy) < 26 && dog.biteCd <= 0) {
+          this.hurtWilds(7, dog.x);
+          dog.biteCd = 1.15;
+        }
+      } else {
+        dog.pause -= dt;
+        if (dog.pause <= 0) {
+          if (Math.abs(dog.x - dog.home) > 46) dog.dir = Math.sign(dog.home - dog.x) || dog.dir;
+          else {
+            dog.dir = Math.random() < 0.5 ? -1 : 1;
+            dog.pause = 0.7 + Math.random() * 1.1;
+          }
+        }
+        dog.x += dog.dir * 12 * dt;
+        dog.moving = true;
+      }
+      dog.x = clamp(dog.x, 16, L.width - 16);
+    }
+
+    if (c.boss && c.boss.active && c.boss.alive) this.updateScorpion(dt);
+
+    if (this.input.consume('shard')) this.throwWildsShards();
+    c.beamDir = p.facing || 1;
+    c.beamOn = this.input.down('laser') && (
+      c.dogs.some((dog) => dog.alive) || (c.boss && c.boss.active && c.boss.alive)
+    );
+    if (c.beamOn) {
+      c.beamTick += dt;
+      while (c.beamTick >= 0.1) {
+        c.beamTick -= 0.1;
+        this.damageWithWildsBeam();
+      }
+    } else {
+      c.beamTick = 0;
+    }
+
+    const keep = [];
+    for (const shard of c.shards) {
+      shard.life += dt;
+      const target = shard.target;
+      if (!target || !target.alive || shard.life > 2.0) continue;
+      const ty = groundAt(L, target.x) - (target === c.boss ? 28 : 9);
+      const dx = target.x - shard.x;
+      const dy = ty - shard.y;
+      const len = Math.max(1, Math.hypot(dx, dy));
+      shard.vx = lerp(shard.vx, (dx / len) * 280, Math.min(1, dt * 5));
+      shard.vy = lerp(shard.vy, (dy / len) * 280, Math.min(1, dt * 5));
+      shard.x += shard.vx * dt;
+      shard.y += shard.vy * dt;
+      if (Math.hypot(target.x - shard.x, ty - shard.y) < 15) {
+        this.damageWilds(target, 1, shard.x, shard.y);
+        continue;
+      }
+      keep.push(shard);
+    }
+    c.shards = keep;
+
+    if (c.hp <= 0) this.showWildsDown();
+  }
+
+  updateScorpion(dt) {
+    const c = this.combat;
+    const b = c.boss;
+    const L = this.level;
+    const p = this.player;
+    b.flash = Math.max(0, b.flash - dt * 3.8);
+    b.stomp = Math.max(0, b.stomp - dt);
+    b.intro = Math.max(0, b.intro - dt);
+    b.x = clamp(b.x, L.boss.arenaMin + 30, L.width - 42);
+    b.y = groundAt(L, b.x);
+    b.facing = Math.sign(p.x - b.x) || b.facing;
+    if (b.intro > 0) return;
+
+    const dx = p.x - b.x;
+    if (Math.abs(dx) > 120) b.x += Math.sign(dx) * 25 * dt;
+    if (Math.abs(dx) < 26 && c.invuln <= 0 && Math.abs(p.y - b.y) < 28) {
+      this.hurtWilds(9, b.x);
+    }
+
+    if (b.stingT > 0) {
+      b.stingT = Math.max(0, b.stingT - dt);
+      if (b.stingT <= 0 && !b.stingHit) {
+        b.stingHit = true;
+        b.stomp = 0.55;
+        const hit = Math.abs(p.x - b.stingX) < 36 && p.y > groundAt(L, p.x) - 18;
+        if (hit) this.hurtWilds(15, b.stingX);
+        this.audio.play('blast');
+        for (let i = 0; i < 22; i++) {
+          const side = i % 2 ? 1 : -1;
+          this.spawn({
+            type: 'spark',
+            x: b.stingX + side * (4 + Math.random() * 16),
+            y: groundAt(L, b.stingX) - 2,
+            vx: side * (20 + Math.random() * 60),
+            vy: -12 - Math.random() * 36,
+            size: i % 4 ? 1 : 2,
+            color: i % 2 ? '#e0a060' : '#ffd9a0',
+            max: 0.4 + Math.random() * 0.5,
+            grav: 54,
+            drag: 0.94,
+          });
+        }
+      }
+    } else if (b.clawT > 0) {
+      b.clawT = Math.max(0, b.clawT - dt);
+      if (b.clawT <= 0 && !b.clawHit) {
+        b.clawHit = true;
+        if (Math.abs(p.x - b.x) < 78 && Math.abs(p.y - b.y) < 28) this.hurtWilds(12, b.x);
+        this.audio.play('whisper');
+      }
+    } else {
+      b.attackCd -= dt;
+      if (b.attackCd <= 0) {
+        if (Math.abs(dx) < 115) {
+          b.clawT = b.clawMax;
+          b.clawHit = false;
+        } else {
+          b.stingT = b.stingMax;
+          b.stingX = p.x;
+          b.stingHit = false;
+        }
+        b.attackCd = 2.0 + Math.random() * 1.1;
+        this.audio.play('power');
+      }
+    }
+  }
+
+  hurtWilds(amount, sourceX) {
+    const c = this.combat;
+    if (!c || c.invuln > 0 || this.mode === 'ending') return;
+    c.hp = Math.max(0, c.hp - amount);
+    c.invuln = 0.9;
+    c.hurt = 1;
+    const p = this.player;
+    p.vx = (p.x < sourceX ? -1 : 1) * 120;
+    p.vy = -48;
+    p.onGround = false;
+    this.audio.play('whisper');
+    for (let i = 0; i < 12; i++) {
+      this.spawn({
+        type: 'spark',
+        x: p.x,
+        y: p.y - 10,
+        vx: (Math.random() - 0.5) * 70,
+        vy: -Math.random() * 55,
+        size: 1,
+        color: i % 2 ? '#ffffff' : '#ff8a5a',
+        max: 0.35 + Math.random() * 0.35,
+        grav: 80,
+        drag: 0.94,
+      });
+    }
+    if (c.hp <= 0) this.showWildsDown();
+  }
+
+  throwWildsShards() {
+    const c = this.combat;
+    if (!c) return;
+    const p = this.player;
+    let target = null;
+    let best = 430;
+    for (const dog of c.dogs) {
+      if (!dog.alive) continue;
+      const d = Math.abs(dog.x - p.x);
+      if (d < best) {
+        best = d;
+        target = dog;
+      }
+    }
+    if (c.boss && c.boss.active && c.boss.alive) {
+      const d = Math.abs(c.boss.x - p.x);
+      if (d < best) target = c.boss;
+    }
+    if (!target) return;
+
+    for (let i = 0; i < 3; i++) {
+      const sx = p.x + p.facing * 8;
+      const sy = p.y - 20 + (i - 1) * 3;
+      const ty = groundAt(this.level, target.x) - (target === c.boss ? 28 : 9);
+      const dx = target.x - sx;
+      const dy = ty - sy;
+      const len = Math.max(1, Math.hypot(dx, dy));
+      const a = Math.atan2(dy, dx) + (i - 1) * 0.055;
+      c.shards.push({
+        x: sx,
+        y: sy,
+        vx: Math.cos(a) * 280,
+        vy: Math.sin(a) * 280,
+        target,
+        life: 0,
+        spin: (i - 1) * 0.55,
+      });
+    }
+    this.audio.play('blast');
+    for (let i = 0; i < 7; i++) {
+      this.spawn({
+        type: 'spark',
+        x: p.x + p.facing * 8,
+        y: p.y - 20,
+        vx: p.facing * (18 + Math.random() * 28),
+        vy: (Math.random() - 0.5) * 34,
+        size: 1,
+        color: i % 2 ? '#ffffff' : '#cfeaff',
+        max: 0.28 + Math.random() * 0.22,
+        drag: 0.92,
+      });
+    }
+  }
+
+  damageWithWildsBeam() {
+    const c = this.combat;
+    if (!c) return;
+    const L = this.level;
+    const p = this.player;
+    const dir = p.facing || 1;
+    const beamY = groundAt(L, p.x) - 40;
+    for (const dog of c.dogs) {
+      if (!dog.alive) continue;
+      const ahead = (dog.x - p.x) * dir;
+      if (ahead > -10 && ahead < 430 && Math.abs(groundAt(L, dog.x) - 22 - beamY) < 58) {
+        this.damageWilds(dog, 6, dog.x, groundAt(L, dog.x) - 9);
+      }
+    }
+    if (c.boss && c.boss.active && c.boss.alive) {
+      const ahead = (c.boss.x - p.x) * dir;
+      if (ahead > -10 && ahead < 540 && Math.abs(groundAt(L, c.boss.x) - 32 - beamY) < 76) {
+        this.damageWilds(c.boss, 3, c.boss.x - 12, groundAt(L, c.boss.x) - 28);
+      }
+    }
+  }
+
+  damageWilds(target, amount, hitX, hitY) {
+    if (!target || !target.alive) return;
+    const c = this.combat;
+    const boss = c && target === c.boss;
+    target.hp = Math.max(0, target.hp - amount);
+    target.flash = 1;
+    for (let i = 0; i < 7; i++) {
+      const a = Math.random() * TAU;
+      const sp = 16 + Math.random() * 52;
+      this.spawn({
+        type: 'spark',
+        x: hitX,
+        y: hitY,
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp,
+        size: i % 4 === 0 ? 2 : 1,
+        color: i % 2 ? (boss ? '#ffd9a0' : '#ff7a50') : '#ffffff',
+        max: 0.25 + Math.random() * 0.45,
+        grav: 22,
+        drag: 0.94,
+      });
+    }
+    if (target.hp > 0) return;
+    target.alive = false;
+    if (boss) {
+      this.defeatScorpion();
+      return;
+    }
+    this.audio.play('whisper');
+    for (let i = 0; i < 20; i++) {
+      const a = Math.random() * TAU;
+      const sp = 18 + Math.random() * 48;
+      this.spawn({
+        type: 'smoke',
+        x: target.x,
+        y: groundAt(this.level, target.x) - 10,
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp - 8,
+        size: 2 + Math.floor(Math.random() * 3),
+        color: '#09070b',
+        max: 0.7 + Math.random() * 0.8,
+        alpha: 0.7,
+        drag: 0.94,
+      });
+    }
+  }
+
+  defeatScorpion() {
+    const c = this.combat;
+    if (!c || !c.boss || c.bossDefeated) return;
+    const b = c.boss;
+    b.alive = false;
+    b.active = false;
+    c.bossDefeated = true;
+    c.beamOn = false;
+    c.shards.length = 0;
+    this.audio.play('blast');
+    for (let i = 0; i < 64; i++) {
+      const a = Math.random() * TAU;
+      const sp = 18 + Math.random() * 92;
+      this.spawn({
+        type: i % 3 ? 'spark' : 'smoke',
+        x: b.x + (Math.random() - 0.5) * 26,
+        y: groundAt(this.level, b.x) - 20 - Math.random() * 28,
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp - 16,
+        size: i % 4 === 0 ? 2 : 1,
+        color: i % 3 ? '#e0a060' : '#fff0d0',
+        max: 0.7 + Math.random() * 0.9,
+        grav: 24,
+        drag: 0.95,
+      });
+    }
+    this.note = {
+      title: 'THE SCORPION',
+      text: 'It folds its legs and becomes part of the sand. The way south is open.',
+      color: '#e0a060',
+      t: 0,
+      typed: 0,
+    };
+    this.beats = [];
+  }
+
+  showWildsDown() {
+    if (this.mode === 'ending') return;
+    this.combat = null;
+    this.mode = 'ending';
+    this.ending = {
+      name: 'THE MAINLAND',
+      continued: true,
+      lines: [
+        'THE DUNES TAKE HER WEIGHT, AND THEN THEY TAKE THE REST.',
+        'THE BLACK DOGS ARE ALREADY GONE. THE SCORPION IS STILL WAITING.',
+        'THE MAINLAND WILL KEEP HER THIS TIME.',
+      ],
+      count: this.found.size,
+      powers: this.powers.size,
+      t: 0,
+    };
+    this.fade = 1;
+    this.fadeTarget = 0;
+    this.audio.play('transition');
+    this.audio.applyBiome('mainland');
+  }
+
+  beginStoryEnding() {
+    if (this.mode === 'ending') return;
+    this.combat = null;
+    this.mode = 'ending';
+    this.ending = {
+      name: 'THE GREEN CLIFFS',
+      continued: true,
+      lines: [
+        'THE BRIDGES HOLD. THE CLIFFS GO ON, GREEN AND PATIENT.',
+        'SHE DOES NOT LOOK BACK AT THE DESERT.',
+        'BELOW, THE WHALE IS ONLY A SHADOW AGAIN.',
+        'THE ROAD ENDS HERE — FOR NOW.',
+      ],
+      count: this.found.size,
+      powers: this.powers.size,
+      t: 0,
+    };
+    this.fade = 1;
+    this.fadeTarget = 0;
+    this.audio.applyBiome('cliffs');
+    this.audio.play('ending');
+  }
+
+  updateWhale(dt) {
+    if (!this.level || !this.level.cliffs) return;
+    if (this.whale) {
+      this.whale.t += dt;
+      if (this.whale.t > 3.6) this.whale = null;
+      return;
+    }
+    if (this.whaleDone || this.level.whaleBridge == null) return;
+    const b = this.level.bridges[this.level.whaleBridge];
+    if (!b) return;
+    if (this.player.x > b.x + 24 && this.player.x < b.x + b.w - 24) {
+      this.whale = { t: 0, bridge: b };
+      this.whaleDone = true;
+      this.audio.play('whale');
+    }
+  }
+
+  finishVoyage() {
+    const v = this.voyage;
+    if (!v) return;
+    const next = v.next;
+    this.voyage = null;
+    if (!Number.isInteger(next) || next >= LEVEL_COUNT) {
+      this.startGame();
+      return;
+    }
+    this.mode = 'play';
+    this.ending = null;
+    this.loadLevel(next);
+    this.fade = 1;
+    this.fadeTarget = 0;
+    this.frozen = false;
+    this.audio.applyBiome(this.level.theme);
+    this.audio.play('transition');
   }
 
   drawVoyageIsland(g, x, y, s, i) {
@@ -2018,12 +2556,12 @@ export class Game {
       drawText(g, 'THE MAINLAND', W / 2, H - 50, {
         align: 'center', color: '#efe6d8', scale: 2, spacing: 3, shadow: '#000000',
       });
-      drawText(g, 'THE END', W / 2, H - 30, {
-        align: 'center', color: '#c8a86e', scale: 1, spacing: 5, shadow: '#000000',
+      drawText(g, 'THE DESERT REMEMBERS HER', W / 2, H - 30, {
+        align: 'center', color: '#d9a36e', scale: 1, spacing: 3, shadow: '#000000',
       });
       const blink = 0.35 + 0.65 * Math.abs(Math.sin(this.time * 1.8));
       g.globalAlpha *= blink;
-      drawText(g, 'R  WALK AGAIN', W / 2, H - 14, {
+      drawText(g, 'E  STEP ASHORE', W / 2, H - 14, {
         align: 'center', color: '#9c93a6', scale: 1, spacing: 2,
       });
       g.restore();
@@ -2237,6 +2775,8 @@ export class Game {
     const colors = {
       forest: ['#2a4438', '#1b2e26', '#3f5b4a'],
       desert: ['#e8dcc0', '#d3c3a1', '#f2ead4'],
+      mainland: ['#d9a06a', '#b87548', '#f0d3a0'],
+      cliffs: ['#7fa06b', '#557a52', '#b7d58a'],
       mountain: ['#dceaf8', '#b6cbe0', '#ffffff'],
       village: ['#5a4a44', '#6d5b52', '#8a786c'],
       city: ['#3a3f52', '#4a5166', '#5c6478'],
@@ -2319,6 +2859,24 @@ export class Game {
           max: 2.4,
           alpha: 0.28,
           size: 1,
+        });
+      }
+    } else if (theme === 'mainland') {
+      if (rnd() < dt * 8) {
+        this.spawn({
+          type: 'mote', x: camX - 10, y: 90 + rnd() * 150,
+          vx: 18 + rnd() * 28, vy: (rnd() - 0.5) * 5,
+          color: rnd() < 0.5 ? '#f2c58e' : '#d99862', max: 5 + rnd() * 4,
+          alpha: 0.3, size: rnd() < 0.2 ? 2 : 1,
+        });
+      }
+    } else if (theme === 'cliffs') {
+      if (rnd() < dt * 4) {
+        this.spawn({
+          type: 'mote', x: camX + rnd() * W, y: 120 + rnd() * 115,
+          vx: 3 + rnd() * 8, vy: -2 - rnd() * 4,
+          color: rnd() < 0.5 ? '#c4e0c4' : '#e8f2d8', max: 5 + rnd() * 5,
+          alpha: 0.32, size: 1, sway: 3,
         });
       }
     } else if (theme === 'mountain') {
@@ -2579,6 +3137,7 @@ export class Game {
       this.drawBossBattle(g);
       return;
     }
+    if (this.combat) this.drawWildsBack(g);
     // the four, standing at the end of the last street, before she reaches them
     if (this.level.teens) {
       for (const teen of this.level.teens) {
@@ -2603,10 +3162,311 @@ export class Game {
       });
     }
     this.drawPlayer(g);
+    if (this.combat) this.drawWildsFront(g);
+    if (this.whale) this.drawWhale(g);
     if (this.level.foreground) {
       const x = Math.round(this.cam.x);
       g.drawImage(this.level.foreground, x, 0, Math.min(W, this.level.width - x), H, 0, 0, Math.min(W, this.level.width - x), H);
     }
+  }
+
+  drawWildsBack(g) {
+    const c = this.combat;
+    const L = this.level;
+    if (!c) return;
+    const boss = c.boss;
+
+    // The scorpion waits at the far end of the dunes, then fills the screen.
+    if (boss && boss.alive && (boss.active || this.player.x > L.boss.triggerX - 300)) {
+      const bx = boss.x - this.cam.x;
+      if (bx > -150 && bx < W + 150) {
+        drawScorpion(g, bx, groundAt(L, boss.x), this.time, {
+          scale: 1.08,
+          facing: boss.facing,
+          flash: boss.flash,
+          stomp: boss.stomp,
+          sting: boss.stingT > 0 ? 1 : 0,
+          claw: boss.clawT > 0 ? 1 : 0,
+        });
+        if (boss.stingT > 0) {
+          const k = clamp(1 - boss.stingT / boss.stingMax, 0, 1);
+          const mx = boss.stingX - this.cam.x;
+          const my = groundAt(L, boss.stingX) - 2;
+          if (mx > -50 && mx < W + 50) {
+            g.save();
+            g.globalCompositeOperation = 'lighter';
+            g.globalAlpha = 0.3 + k * 0.55;
+            glow(g, mx, my - 8, 16 + k * 24, '#ff6a3c', 0.55);
+            g.strokeStyle = '#ffb07a';
+            g.lineWidth = 1;
+            g.beginPath();
+            g.ellipse(mx, my, 34 - k * 8, 5, 0, 0, TAU);
+            g.stroke();
+            g.fillStyle = 'rgba(255,176,122,0.55)';
+            g.fillRect(Math.round(mx), Math.round(my) - 42, 1, 36);
+            g.restore();
+          }
+        }
+        if (boss.clawT > 0) {
+          const k = clamp(1 - boss.clawT / boss.clawMax, 0, 1);
+          const my = groundAt(L, boss.x) - 2;
+          g.save();
+          g.globalCompositeOperation = 'lighter';
+          g.globalAlpha = 0.25 + k * 0.45;
+          g.strokeStyle = '#e0a060';
+          g.lineWidth = 2;
+          g.beginPath();
+          g.ellipse(bx - 30, my, 54 + k * 24, 8, 0, 0, TAU);
+          g.stroke();
+          g.restore();
+        }
+      }
+    }
+
+    for (const dog of c.dogs) {
+      if (!dog.alive) continue;
+      const sx = dog.x - this.cam.x;
+      if (sx < -70 || sx > W + 70) continue;
+      drawDog(g, sx, groundAt(L, dog.x), this.time, {
+        facing: dog.dir,
+        flash: dog.flash,
+        moving: dog.moving,
+        run: dog.x * 0.01,
+      });
+    }
+
+    if (c.beamOn) this.drawWildsBeam(g);
+  }
+
+  drawWildsFront(g) {
+    const c = this.combat;
+    if (!c) return;
+    for (const shard of c.shards) {
+      const sx = shard.x - this.cam.x;
+      if (sx < -20 || sx > W + 20) continue;
+      g.save();
+      g.translate(Math.round(sx), Math.round(shard.y));
+      g.rotate(Math.atan2(shard.vy, shard.vx) + shard.spin);
+      g.globalCompositeOperation = 'lighter';
+      glow(g, 0, 0, 12, '#dff3ff', 0.6);
+      g.fillStyle = '#ffffff';
+      g.beginPath();
+      g.moveTo(6, 0);
+      g.lineTo(0, -3);
+      g.lineTo(-5, 0);
+      g.lineTo(0, 3);
+      g.closePath();
+      g.fill();
+      g.fillStyle = '#bdeaff';
+      g.fillRect(-3, -1, 5, 2);
+      g.restore();
+    }
+  }
+
+  drawWildsBeam(g) {
+    const c = this.combat;
+    if (!c || !c.beamOn) return;
+    const L = this.level;
+    const p = this.player;
+    const dir = c.beamDir || 1;
+    const xs = this.guardians.map((gd) => gd.x - this.cam.x + 10);
+    const gx = dir > 0 ? Math.min(...xs) : Math.max(...xs);
+    const ex = dir > 0 ? W + 30 : -30;
+    const x0 = Math.min(gx, ex);
+    const width = Math.abs(ex - gx);
+    if (width <= 0 || !Number.isFinite(width)) return;
+    const beamY = groundAt(L, p.x) - 40;
+    const pulse = 0.9 + Math.sin(this.time * 26) * 0.08;
+
+    g.save();
+    g.globalCompositeOperation = 'lighter';
+    g.globalAlpha = 0.42 * pulse;
+    g.fillStyle = '#c9e8ff';
+    g.fillRect(x0, beamY - 30, width, 60);
+    glow(g, x0 + width * 0.55, beamY, Math.min(170, width * 0.7), '#e8f7ff', 0.58);
+    g.globalAlpha = 0.78;
+    g.fillStyle = '#eaf7ff';
+    g.fillRect(x0, beamY - 18, width, 36);
+    g.globalAlpha = 0.96;
+    g.fillStyle = '#ffffff';
+    g.fillRect(x0, beamY - 9, width, 18);
+    g.globalAlpha = 0.86;
+    g.fillRect(x0, beamY - 3, width, 6);
+    for (const gx2 of xs) {
+      glow(g, gx2, beamY, 30, '#ffffff', 0.9);
+      g.fillStyle = '#ffffff';
+      g.fillRect(Math.round(gx2 - 3), Math.round(beamY - 14), 8, 28);
+    }
+    for (let i = 0; i < 10; i++) {
+      const k = (this.time * 2.8 + i / 10) % 1;
+      g.globalAlpha = 0.5 + (i % 3) * 0.12;
+      g.fillStyle = '#ffffff';
+      g.fillRect(Math.round(x0 + k * width), Math.round(beamY + Math.sin(this.time * 17 + i * 2.1) * 8), 2, 2);
+    }
+    g.restore();
+  }
+
+  drawWildsUI(g) {
+    const c = this.combat;
+    if (!c) return;
+    const boss = c.boss;
+    const bossAlive = boss && boss.active && boss.alive;
+
+    if (bossAlive) {
+      g.save();
+      g.fillStyle = 'rgba(3,4,10,0.7)';
+      g.fillRect(68, 4, W - 136, 38);
+      drawText(g, 'THE SCORPION', W / 2, 6, {
+        align: 'center', color: '#e8c08c', scale: 1, spacing: 2, shadow: '#000000',
+      });
+      drawText(g, 'THE OLD KEEPER OF THE DUNES', W / 2, 17, {
+        align: 'center', color: '#9c8068', scale: 1, spacing: 1, shadow: '#000000',
+      });
+      g.fillStyle = 'rgba(150,120,100,0.25)';
+      g.fillRect(176, 29, 128, 5);
+      g.fillStyle = '#d28a52';
+      g.fillRect(176, 29, Math.max(0, Math.round(128 * boss.hp / boss.maxHp)), 5);
+      g.fillStyle = 'rgba(255,230,190,0.3)';
+      g.fillRect(176, 29, 128, 1);
+      g.restore();
+    }
+
+    const frac = clamp(c.hp / c.max, 0, 1);
+    const col = frac > 0.55 ? '#ffcf8e' : frac > 0.28 ? '#ffb066' : '#ff6a5a';
+    g.save();
+    drawText(g, 'HER', 10, H - 45, { color: '#e2d4c0', scale: 1 });
+    g.fillStyle = 'rgba(8,5,6,0.8)';
+    g.fillRect(9, H - 35, 78, 7);
+    g.fillStyle = col;
+    g.fillRect(10, H - 33, Math.max(0, Math.round(76 * frac)), 3);
+    g.fillStyle = 'rgba(255,255,255,0.22)';
+    g.fillRect(10, H - 33, 76, 1);
+    if (c.hurt > 0.02) {
+      g.fillStyle = `rgba(255,255,255,${0.45 * c.hurt})`;
+      g.fillRect(10, H - 33, 76, 3);
+    }
+    const hint = bossAlive
+      ? 'W JUMP   SHIFT DASH   X SHARDS   C KNIGHTS\' BEAM'
+      : c.dogs.some((dog) => dog.alive)
+        ? 'X SHARDS   C KNIGHTS\' BEAM   W JUMP'
+        : 'THE WAY SOUTH IS OPEN';
+    drawText(g, hint, W / 2, H - 16, {
+      align: 'center', color: bossAlive ? '#f0d4b0' : '#e2d4c0', scale: 1, spacing: 1, shadow: '#000000',
+    });
+    g.restore();
+  }
+
+  drawWhale(g) {
+    const w = this.whale;
+    if (!w) return;
+    const b = w.bridge;
+    const k = clamp(w.t / 2.8, 0, 1);
+    const arc = Math.sin(k * Math.PI);
+    const x = b.x - 40 + (b.w + 80) * k - this.cam.x;
+    const y = 286 - arc * 150;
+    const angle = -Math.cos(k * Math.PI) * 0.36;
+
+    // the water it leaves behind at both lips of the cut
+    g.save();
+    g.globalCompositeOperation = 'lighter';
+    for (const [sx, side] of [[b.x - 14 - this.cam.x, -1], [b.x + b.w + 14 - this.cam.x, 1]]) {
+      const splash = clamp(arc * 1.6, 0, 1);
+      if (splash <= 0) continue;
+      for (let i = 0; i < 14; i++) {
+        const a = -Math.PI * (0.25 + (i / 14) * 0.5);
+        const r = 8 + (i % 5) * 5 + splash * 16;
+        g.globalAlpha = splash * (0.2 + (i % 4) * 0.06);
+        g.fillStyle = i % 3 ? '#b9d9cf' : '#ffffff';
+        g.fillRect(Math.round(sx + Math.cos(a) * r * side), Math.round(246 + Math.sin(a) * r), 2, 2);
+      }
+    }
+    g.restore();
+
+    g.save();
+    g.translate(Math.round(x), Math.round(y));
+    g.rotate(angle);
+    g.globalAlpha = 0.96;
+
+    // tail flukes and the long body
+    g.fillStyle = '#122229';
+    g.beginPath();
+    g.moveTo(-38, -2);
+    g.quadraticCurveTo(-52, -12, -64, -19);
+    g.quadraticCurveTo(-54, -3, -55, 3);
+    g.quadraticCurveTo(-54, 9, -64, 20);
+    g.quadraticCurveTo(-51, 13, -38, 4);
+    g.closePath();
+    g.fill();
+    g.fillStyle = '#182d34';
+    g.beginPath();
+    g.ellipse(-4, 0, 47, 15, 0, 0, TAU);
+    g.fill();
+    g.fillStyle = '#24424a';
+    g.beginPath();
+    g.ellipse(-2, -2, 42, 11, 0, 0, TAU);
+    g.fill();
+    g.fillStyle = '#8aa8a7';
+    g.beginPath();
+    g.ellipse(11, 6, 28, 6, 0, 0, TAU);
+    g.fill();
+    // head and jaw
+    g.fillStyle = '#162b32';
+    g.beginPath();
+    g.ellipse(39, 0, 23, 13, 0, 0, TAU);
+    g.fill();
+    g.fillStyle = '#0e1c22';
+    g.beginPath();
+    g.moveTo(44, 6);
+    g.lineTo(60, 3);
+    g.lineTo(52, 11);
+    g.closePath();
+    g.fill();
+    g.strokeStyle = 'rgba(174,203,199,0.34)';
+    g.lineWidth = 1;
+    g.beginPath();
+    g.moveTo(30, 8);
+    g.lineTo(55, 6);
+    g.stroke();
+    // eye and the long grooves of the throat
+    g.fillStyle = '#d9e6d8';
+    g.fillRect(44, -3, 2, 2);
+    g.fillStyle = '#071014';
+    g.fillRect(45, -3, 1, 1);
+    g.strokeStyle = 'rgba(178,206,201,0.2)';
+    g.beginPath();
+    for (let i = 0; i < 5; i++) {
+      g.moveTo(8 + i * 5, 9);
+      g.lineTo(26 + i * 5, 8);
+    }
+    g.stroke();
+    // pectoral fin
+    g.fillStyle = '#1c363d';
+    g.beginPath();
+    g.moveTo(8, 8);
+    g.lineTo(18, 27);
+    g.lineTo(28, 9);
+    g.closePath();
+    g.fill();
+    // barnacles
+    g.fillStyle = '#8da39d';
+    g.fillRect(-20, -5, 2, 1);
+    g.fillRect(-11, -8, 1, 1);
+    g.fillRect(6, -12, 2, 1);
+    g.restore();
+
+    // droplets falling back into the cut
+    g.save();
+    g.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < 12; i++) {
+      const t = clamp((w.t - i * 0.08) / 2.8, 0, 1);
+      if (t <= 0 || t >= 1) continue;
+      const dx = b.x - 20 + (b.w + 40) * t - this.cam.x;
+      const dy = 286 - Math.sin(t * Math.PI) * 150 + 18 + (1 - t) * 8;
+      g.globalAlpha = 0.18;
+      g.fillStyle = '#c6e0d8';
+      g.fillRect(Math.round(dx), Math.round(dy), 1, 1);
+    }
+    g.restore();
   }
 
   drawPowerSite(g) {
@@ -3041,7 +3901,8 @@ export class Game {
     // faint aura around the girl so she always reads
     const p = this.player;
     const tone = {
-      forest: '#9fe4dc', desert: '#ffe8c8', mountain: '#cfe4ff', village: '#ff9a5a', city: '#9fc8ff', port: '#ffd9a0',
+      forest: '#9fe4dc', desert: '#ffe8c8', mainland: '#ffd2a0', cliffs: '#b7e0bf',
+      mountain: '#cfe4ff', village: '#ff9a5a', city: '#9fc8ff', port: '#ffd9a0',
     }[this.level.theme];
     glow(g, p.x - cam.x, p.y - 10, 46, tone, 0.075);
     g.restore();
@@ -3122,6 +3983,7 @@ export class Game {
     }
 
     if (this.bossBattle) this.drawBossBattleUI(g);
+    if (this.combat) this.drawWildsUI(g);
 
     if (this.hintT < 9 && this.levelIndex === 0) {
       const a = clamp(this.hintT < 7 ? 1 : 9 - this.hintT, 0, 1) * 0.85;
@@ -3260,6 +4122,10 @@ export class Game {
       const s = clamp(this.memorySurge.t, 0, 1.6);
       const a = (1 - s / 1.6) * 0.12;
       g.fillStyle = rgba(this.memorySurge.color, a);
+      g.fillRect(0, 0, W, H);
+    }
+    if (this.combat && this.combat.hurt > 0) {
+      g.fillStyle = `rgba(255,48,32,${this.combat.hurt * 0.16})`;
       g.fillRect(0, 0, W, H);
     }
     if (this.fade > 0.001) {
