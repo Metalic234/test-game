@@ -47,18 +47,6 @@ const POWERS = [
   { id: 'glide', name: 'GLIDE', color: '#bfe6ff' },
   { id: 'dash', name: 'DASH', color: '#ffb066' },
 ];
-// Moments where a shadow steps ahead of her and refuses to let her pass —
-// it stoops close, holds for a breath, then withdraws.
-const BEATS = [
-  { x: 560, line: 'IT STOPS HER. FOR A MOMENT THE FOREST IS VERY QUIET.' },
-  { x: 1900, line: 'HERE, ONCE, THERE WAS A ROAD.' },
-  { x: 1600, line: 'THE COLD REMEMBERS HER BETTER THAN SHE DOES.' },
-  { x: 880, line: 'THEY DO NOT WANT HER TO SEE THE VALLEY YET.' },
-  { x: 2340, line: 'THE DECK IS STILL WARM FROM THE ENGINE.' },
-  { x: 520, line: 'TWO BLACK SHAPES RISE OUT OF THE DUNES.' },
-  { x: 760, line: 'THE BRIDGE HUMPS UNDER HER FEET. SOMETHING MOVES BELOW.' },
-];
-
 function makeVignette() {
   const c = makeCanvas(W, H);
   const g = c.getContext('2d');
@@ -120,8 +108,6 @@ export class Game {
     this.dashCd = 0;
     this.memorySurge = null;
     this.timeline = null;
-    this.beats = [];
-    this.blocker = null;
     this.mutedNotice = 0;
     this.cityScene = null;
     this.lookout = null;
@@ -164,11 +150,11 @@ export class Game {
     return [
       {
         x: px - 52, y: gy(px - 52) - 22, off: 52, hover: 22, hoverCur: 22,
-        phase: 0.7, ember: 0, lean: 0, hesitate: 0, blockX: 0,
+        phase: 0.7, ember: 0, lean: 0,
       },
       {
         x: px - 104, y: gy(px - 104) - 36, off: 104, hover: 36, hoverCur: 36,
-        phase: 2.4, ember: 0, lean: 0, hesitate: 0, blockX: 0,
+        phase: 2.4, ember: 0, lean: 0,
       },
     ];
   }
@@ -197,9 +183,6 @@ export class Game {
     this.bossBattle = null;
     this.dashT = 0;
     this.dashCd = 0;
-    const beat = BEATS[index];
-    this.beats = beat ? [{ ...beat, hold: 0, wait: 0, done: false }] : [];
-    this.blocker = null;
     this.lookout = null;
     this.lookedOut = false;
     this.climbEpilogue = false;
@@ -464,16 +447,6 @@ export class Game {
     else p.vx = 0;
     p.x = clamp(p.x, 8, level.width - 8);
 
-    // a guardian standing its ground is a soft wall until the moment passes
-    const blk = this.blocker;
-    if (blk && blk.x > p.x + 2) {
-      const lim = blk.x - 9;
-      if (p.x > lim) {
-        p.x = lim;
-        p.vx = 0;
-      }
-    }
-
     p.vy = this.powers.has('glide') && !p.onGround && p.vy > 0 && this.input.down('up') && canControl
       ? Math.min(p.vy + GRAV * 0.2 * dt, 62)
       : Math.min(p.vy + GRAV * dt, MAXFALL);
@@ -554,52 +527,23 @@ export class Game {
 
   updateGuardians(dt, idle = false) {
     const p = this.player;
-    if (!idle) this.updateBeats(dt);
 
-    // what the shadows notice: a memory close by, or something in her way
-    const cur = idle ? null : this.curiosity();
-    const danger = idle ? null : this.hazardAhead();
-    const surge = this.memorySurge ? clamp(1 - this.memorySurge.t / 1.6, 0, 1) : 0;
-    for (const gd of this.guardians) {
-      if (danger) gd.hesitate = 0.8;
-      else gd.hesitate = Math.max(0, gd.hesitate - dt * 1.1);
-    }
-
+    // They follow in formation and nothing else. No road-blocks, no warnings,
+    // no little displays of concern: only the escort and the fight.
     for (let i = 0; i < this.guardians.length; i++) {
       const gd = this.guardians[i];
-      const blocking = gd === this.blocker;
-      let target;
-      if (idle) {
-        target = gd.x;
-      } else if (blocking) {
-        target = gd.blockX;
-      } else {
-        const off = gd.off * (1 - 0.4 * surge);
-        target = p.x - p.facing * off - p.facing * (gd.hesitate > 0 ? 22 : 0);
-      }
+      const target = idle ? gd.x : p.x - p.facing * gd.off;
       const dist = target - gd.x;
       const ad = Math.abs(dist);
-      const speed = blocking ? 250 : ad > 150 ? 170 : ad > 60 ? 104 : 54;
+      const speed = ad > 150 ? 170 : ad > 60 ? 104 : 54;
       if (ad < 6) gd.x = damp(gd.x, target, 3.4, dt);
       else gd.x += Math.sign(dist) * speed * dt;
       gd.x = clamp(gd.x, 4, this.level.width - 4);
       const gy = groundAt(this.level, gd.x);
-      const hoverTarget = blocking ? 7 : gd.hover + (gd.hesitate > 0 ? 10 : 0) - surge * 6;
-      gd.hoverCur = damp(gd.hoverCur, hoverTarget, 4, dt);
+      gd.hoverCur = damp(gd.hoverCur, gd.hover, 4, dt);
       const targetY = gy - gd.hoverCur + Math.sin(this.time * 0.9 + gd.phase) * 2.2;
       gd.y = damp(gd.y, targetY, 3.2, dt);
-
-      // lean: down at a memory, forward at a hazard, low over the girl when it bars her way
-      let want = 0;
-      if (blocking) {
-        want = 10 * Math.sign(p.x - gd.x || 1);
-      } else if (gd.hesitate > 0 && danger) {
-        want = 5 * Math.sign(danger.x - gd.x || 1);
-      } else if (cur) {
-        const near = clamp(1 - Math.abs(cur.x - p.x) / 96, 0, 1);
-        want = near * 7 * Math.sign(cur.x - gd.x || 1);
-      }
-      gd.lean = damp(gd.lean, want, 5, dt);
+      gd.lean = damp(gd.lean, 0, 5, dt);
 
       // shadow wisps trailing off the guardians
       gd.ember -= dt;
@@ -617,64 +561,6 @@ export class Game {
           alpha: 0.5,
           drag: 0.985,
         });
-      }
-    }
-  }
-
-  curiosity() {
-    if (!this.level || this.finale) return null;
-    const p = this.player;
-    let best = null;
-    let bd = 96;
-    for (const m of this.level.memories) {
-      if (this.found.has(m.id)) continue;
-      const d = Math.abs(m.x - p.x);
-      if (d < bd) {
-        bd = d;
-        best = m;
-      }
-    }
-    return best;
-  }
-
-  hazardAhead() {
-    if (!this.level || this.finale) return null;
-    const p = this.player;
-    for (const s of this.level.solids) {
-      const d = s.x - p.x;
-      if (d > 2 && d < 46 && s.h >= 8 && p.y - s.y < 28) return { x: s.x, d };
-    }
-    const gy = groundAt(this.level, p.x + 24);
-    if (groundAt(this.level, p.x + 70) - gy > 20) return { x: p.x + 48, d: 48 };
-    return null;
-  }
-
-  updateBeats(dt) {
-    if (!this.beats.length) return;
-    const p = this.player;
-    for (const b of this.beats) {
-      if (b.done) continue;
-      if (b.hold > 0) {
-        b.wait += dt;
-        const gd = this.blocker;
-        // the hold only begins once the shadow is actually standing in her way
-        if (!gd || Math.abs(gd.x - gd.blockX) < 14) b.hold -= dt;
-        if (b.hold <= 0 || b.wait > 3.6) {
-          b.hold = 0;
-          b.done = true;
-          this.blocker = null;
-          this.audio.play('whisper');
-        }
-        return;
-      }
-      if (!this.frozen && !this.note && p.onGround && Math.abs(p.x - b.x) < 80) {
-        b.hold = 2;
-        b.wait = 0;
-        const gd = this.guardians[0];
-        gd.blockX = p.x + p.facing * 92;
-        this.blocker = gd;
-        this.audio.play('whisper');
-        return;
       }
     }
   }
@@ -763,7 +649,6 @@ export class Game {
     this.memory += 1;
     // a memory is not a pickup: for a moment the whole world leans in
     this.memorySurge = { t: 0, color: m.color };
-    for (const gd of this.guardians) gd.lean = 0;
     this.audio.play('memory');
     this.note = { title: m.title, text: m.text, color: m.color, t: 0, typed: 0 };
     this.nearby = null;
@@ -822,7 +707,6 @@ export class Game {
   // The last street. She sits, the knights raise their shields, the four answer.
   beginFinale() {
     this.frozen = true;
-    this.blocker = null;
     this.nearby = null;
     this.nearPower = null;
     this.card = null;
@@ -955,7 +839,6 @@ export class Game {
   beginBossBattle(playerX) {
     this.finale = null;
     this.frozen = false;
-    this.blocker = null;
     const p = this.player;
     p.x = playerX;
     p.y = groundAt(this.level, p.x);
@@ -970,7 +853,6 @@ export class Game {
     const guardianTargets = [playerX - 34, playerX - 62];
     this.guardians.forEach((gd, i) => {
       gd.lean = 0;
-      gd.hesitate = 0;
       gd.hover = i === 0 ? 22 : 28;
     });
 
@@ -1690,6 +1572,8 @@ export class Game {
       hp: 6,
       maxHp: 6,
       alive: true,
+      immune: true,
+      doomed: false,
       flash: 0,
       biteCd: 0.4 + i * 0.19,
       lungeT: 0,
@@ -1743,6 +1627,7 @@ export class Game {
       beamOn: false,
       beamTick: 0,
       beamDir: 1,
+      guardianLasers: [],
     };
   }
 
@@ -1754,9 +1639,7 @@ export class Game {
     b.active = true;
     b.intro = 1.6;
     b.attackCd = 1.7;
-    this.blocker = null;
     this.card = null;
-    this.beats = [];
     this.player.facing = 1;
     this.audio.play('power');
     const pale = b.kind === 'giant';
@@ -1840,8 +1723,10 @@ export class Game {
         spider.x += spider.dir * 180 * dt;
         if (!spider.lungeHit && Math.abs(p.x - spider.x) < 22 && Math.abs(p.y - gy) < 30) {
           spider.lungeHit = true;
-          this.audio.play('spiderBite');
-          this.hurtWilds(8, spider.x);
+          if (this.hurtWilds(8, spider.x)) {
+            this.audio.play('spiderBite');
+            this.guardianAnswer(spider);
+          }
           spider.biteCd = 1.25;
         }
       } else if (close) {
@@ -1849,8 +1734,10 @@ export class Game {
         spider.dir = Math.sign(dx) || spider.dir;
         if (Math.abs(dx) < 26) {
           if (spider.biteCd <= 0) {
-            this.audio.play('spiderBite');
-            this.hurtWilds(8, spider.x);
+            if (this.hurtWilds(8, spider.x)) {
+              this.audio.play('spiderBite');
+              this.guardianAnswer(spider);
+            }
             spider.biteCd = 1.25;
           }
         } else if (Math.abs(dx) < 92 && spider.lungeCd <= 0) {
@@ -1875,6 +1762,18 @@ export class Game {
       }
       spider.x = clamp(spider.x, 16, L.width - 16);
     }
+
+    for (const beam of c.guardianLasers) {
+      beam.t += dt;
+      beam.x = beam.target.x;
+      if (!beam.hit && beam.t >= 0.13 && beam.target.alive) {
+        beam.hit = true;
+        this.damageWilds(
+          beam.target, 999, beam.x, groundAt(L, beam.x) - 18, true,
+        );
+      }
+    }
+    c.guardianLasers = c.guardianLasers.filter((beam) => beam.t < beam.dur);
 
     if (c.boss && c.boss.active && c.boss.alive) {
       if (c.boss.kind === 'giant') this.updateGiant(dt);
@@ -2065,7 +1964,7 @@ export class Game {
 
   hurtWilds(amount, sourceX) {
     const c = this.combat;
-    if (!c || c.invuln > 0 || this.mode === 'ending') return;
+    if (!c || c.invuln > 0 || this.mode === 'ending') return false;
     c.hp = Math.max(0, c.hp - amount);
     c.invuln = 0.9;
     c.hurt = 1;
@@ -2089,6 +1988,21 @@ export class Game {
       });
     }
     if (c.hp <= 0) this.showWildsDown();
+    return true;
+  }
+
+  guardianAnswer(spider) {
+    const c = this.combat;
+    if (!c || !spider || !spider.alive || spider.doomed) return;
+    spider.doomed = true;
+    c.guardianLasers.push({
+      target: spider,
+      x: spider.x,
+      t: 0,
+      dur: 0.55,
+      hit: false,
+    });
+    this.audio.play('guardianBeam');
   }
 
   throwWildsShards() {
@@ -2183,8 +2097,27 @@ export class Game {
     }
   }
 
-  damageWilds(target, amount, hitX, hitY) {
-    if (!target || !target.alive) return;
+  damageWilds(target, amount, hitX, hitY, byGuardian = false) {
+    if (!target || !target.alive) return false;
+    if (target.immune && !byGuardian) {
+      for (let i = 0; i < 5; i++) {
+        const a = Math.random() * TAU;
+        const sp = 8 + Math.random() * 26;
+        this.spawn({
+          type: 'spark',
+          x: hitX,
+          y: hitY,
+          vx: Math.cos(a) * sp,
+          vy: Math.sin(a) * sp - 6,
+          size: 1,
+          color: i % 2 ? '#dff3ff' : '#ffffff',
+          max: 0.2 + Math.random() * 0.2,
+          grav: 16,
+          drag: 0.92,
+        });
+      }
+      return false;
+    }
     const c = this.combat;
     const boss = c && target === c.boss;
     target.hp = Math.max(0, target.hp - amount);
@@ -2205,11 +2138,11 @@ export class Game {
         drag: 0.94,
       });
     }
-    if (target.hp > 0) return;
+    if (target.hp > 0) return true;
     target.alive = false;
     if (boss) {
       this.defeatScorpion();
-      return;
+      return true;
     }
     this.audio.play('whisper');
     for (let i = 0; i < 20; i++) {
@@ -2228,6 +2161,7 @@ export class Game {
         drag: 0.94,
       });
     }
+    return true;
   }
 
   defeatScorpion() {
@@ -2268,7 +2202,6 @@ export class Game {
       t: 0,
       typed: 0,
     };
-    this.beats = [];
   }
 
   showWildsDown() {
@@ -2877,7 +2810,6 @@ export class Game {
   // She climbs until the mountain gives out, and the valley shows her what is left of the city.
   beginLookout() {
     this.frozen = true;
-    this.blocker = null;
     this.nearby = null;
     this.nearPower = null;
     this.card = null;
@@ -3598,6 +3530,56 @@ export class Game {
       g.fillRect(-3, -1, 5, 2);
       g.restore();
     }
+    for (const beam of c.guardianLasers) this.drawGuardianAnswer(g, beam);
+  }
+
+  drawGuardianAnswer(g, beam) {
+    const c = this.combat;
+    if (!c || !beam.target) return;
+    const L = this.level;
+    const tx = beam.x - this.cam.x;
+    const ty = groundAt(L, beam.x) - 15;
+    if (tx < -60 || tx > W + 60) return;
+    const fade = clamp(
+      Math.min(1, beam.t * 12) * Math.max(0, 1 - Math.max(0, beam.t - 0.26) / 0.3),
+      0,
+      1,
+    );
+    if (fade <= 0) return;
+
+    g.save();
+    g.globalCompositeOperation = 'lighter';
+    for (const gd of this.guardians) {
+      const sx = gd.x - this.cam.x + 8;
+      const sy = gd.y - 24;
+      g.globalAlpha = fade * 0.22;
+      g.strokeStyle = '#9fc8ff';
+      g.lineWidth = 9;
+      g.beginPath();
+      g.moveTo(sx, sy);
+      g.lineTo(tx, ty);
+      g.stroke();
+      g.globalAlpha = fade * 0.8;
+      g.strokeStyle = '#eaf7ff';
+      g.lineWidth = 3;
+      g.beginPath();
+      g.moveTo(sx, sy);
+      g.lineTo(tx, ty);
+      g.stroke();
+      g.globalAlpha = fade;
+      g.strokeStyle = '#ffffff';
+      g.lineWidth = 1;
+      g.beginPath();
+      g.moveTo(sx, sy);
+      g.lineTo(tx, ty);
+      g.stroke();
+      glow(g, (sx + tx) * 0.5, (sy + ty) * 0.5, 18, '#bfe6ff', 0.48 * fade);
+    }
+    glow(g, tx, ty, 24, '#dff3ff', 0.75 * fade);
+    g.globalAlpha = fade;
+    g.fillStyle = '#ffffff';
+    g.fillRect(Math.round(tx - 2), Math.round(ty - 2), 5, 5);
+    g.restore();
   }
 
   drawWildsBeam(g) {
@@ -3686,11 +3668,16 @@ export class Game {
     const hasFoes = c.dogs.some((dog) => dog.alive)
       || c.spiders.some((spider) => spider.alive)
       || (boss && boss.alive);
+    const spiderOnly = c.spiders.some((spider) => spider.alive)
+      && !c.dogs.some((dog) => dog.alive)
+      && !(boss && boss.alive);
     const hint = bossAlive
       ? 'W JUMP   SHIFT DASH   X SHARDS   C KNIGHTS\' BEAM'
-      : hasFoes
-        ? 'X SHARDS   C KNIGHTS\' BEAM   W JUMP'
-        : 'THE WAY IS OPEN';
+      : spiderOnly
+        ? 'X / C CANNOT CUT THEM - LET THE SPIDER STRIKE'
+        : hasFoes
+          ? 'X SHARDS   C KNIGHTS\' BEAM   W JUMP'
+          : 'THE WAY IS OPEN';
     drawText(g, hint, W / 2, H - 16, {
       align: 'center', color: bossAlive ? '#f0d4b0' : '#e2d4c0', scale: 1, spacing: 1, shadow: '#000000',
     });
@@ -4453,17 +4440,6 @@ export class Game {
       g.globalAlpha = a;
       drawText(g, 'A D WALK   W JUMP   E REMEMBER / SPEND   SHIFT DASH   X SHARDS   C BEAM', W / 2, H - 30, {
         align: 'center', color: '#b8b0c4', scale: 1,
-      });
-      g.restore();
-    }
-
-    const beat = this.beats.find((b) => b.hold > 0);
-    if (beat) {
-      const a = clamp((2 - beat.hold) / 0.5, 0, 1) * clamp(beat.hold / 0.7, 0, 1);
-      g.save();
-      g.globalAlpha = a * 0.85;
-      drawText(g, beat.line, W / 2, 224, {
-        align: 'center', color: '#cfc4c0', scale: 1, spacing: 1, shadow: '#0a0709',
       });
       g.restore();
     }

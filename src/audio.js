@@ -532,6 +532,9 @@ export class AudioEngine {
       case 'spiderBite':
         this.spiderBite(t);
         break;
+      case 'guardianBeam':
+        this.guardianBeam(t);
+        break;
       case 'scorpionClaw':
         this.scorpionClaw(t);
         break;
@@ -780,6 +783,12 @@ export class AudioEngine {
   spiderBite(t) {
     this.noiseHit(t, 1500, 0.07, 0.016, 2.2);
     this.sweep(t, 340, 120, 0.12, 0.022, 'square');
+  }
+
+  guardianBeam(t) {
+    this.sweep(t, 180, 820, 0.24, 0.038, 'sawtooth');
+    this.sweep(t, 960, 260, 0.2, 0.022, 'triangle');
+    this.noiseHit(t, 2800, 0.15, 0.018, 1.8);
   }
 
   scorpionClaw(t) {
