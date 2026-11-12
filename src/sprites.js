@@ -765,3 +765,435 @@ export function drawMote(g, x, y, color, size = 1, alpha = 1) {
   g.fillRect(Math.round(x), Math.round(y), size, size);
   g.restore();
 }
+
+// A jungle spider: broad legs, a heavy abdomen, and too many eyes.
+export function drawSpider(g, cx, baseY, t, opts = {}) {
+  const scale = opts.scale || 1;
+  const facing = opts.facing || -1;
+  const flash = opts.flash || 0;
+  const moving = !!opts.moving;
+  const run = opts.run || 0;
+  const lunge = opts.lunge || 0;
+  const alpha = opts.alpha ?? 1;
+
+  g.save();
+  g.globalAlpha = alpha;
+  g.translate(Math.round(cx), Math.round(baseY));
+  g.scale(facing * scale, scale);
+
+  // A low shadow so the legs stay grounded.
+  g.fillStyle = 'rgba(6,5,10,0.5)';
+  g.beginPath();
+  g.ellipse(0, 0, 28, 4, 0, 0, TAU);
+  g.fill();
+
+  // Four jointed legs on each side, moving in alternating pairs.
+  g.lineCap = 'round';
+  for (const side of [-1, 1]) {
+    for (let i = 0; i < 4; i++) {
+      const rootX = -8 + i * 7;
+      const phase = t * (moving ? 10 : 5) + i * 1.7 + (side > 0 ? 2.1 : 0) + run;
+      const swing = Math.sin(phase) * (moving ? 2 : 0.7);
+      const spread = 9 + i * 2.2 + lunge * 4;
+      const kneeX = rootX + side * spread + swing * 0.4;
+      const kneeY = -15 - i * 1.6 + Math.abs(swing) * 0.5;
+      const footX = rootX + side * (20 + i * 2.7) + swing * 1.4;
+      const footY = -1 + Math.abs(swing) * 0.35;
+      g.strokeStyle = i % 2 ? '#21182a' : '#150f1b';
+      g.lineWidth = 3;
+      g.beginPath();
+      g.moveTo(rootX, -17);
+      g.lineTo(kneeX, kneeY);
+      g.lineTo(footX, footY);
+      g.stroke();
+      g.strokeStyle = '#3d2b4a';
+      g.lineWidth = 1;
+      g.beginPath();
+      g.moveTo(rootX, -18);
+      g.lineTo(kneeX, kneeY - 1);
+      g.stroke();
+      g.fillStyle = '#0d0a12';
+      g.fillRect(Math.round(footX) - 2, Math.round(footY) - 1, 5, 2);
+    }
+  }
+
+  // Abdomen, thorax, and the low wedge of the head.
+  g.fillStyle = '#120d18';
+  g.beginPath();
+  g.ellipse(-11, -21, 17, 14, -0.08, 0, TAU);
+  g.fill();
+  g.fillStyle = '#2a2033';
+  g.beginPath();
+  g.ellipse(-11, -23, 13, 10, -0.08, 0, TAU);
+  g.fill();
+  g.fillStyle = '#4c3858';
+  g.beginPath();
+  g.ellipse(-14, -27, 6, 4, 0, 0, TAU);
+  g.fill();
+
+  // Mossy hourglass markings on the abdomen.
+  g.fillStyle = '#8fbd6a';
+  g.beginPath();
+  g.moveTo(-17, -27);
+  g.lineTo(-9, -21);
+  g.lineTo(-9, -17);
+  g.lineTo(-18, -23);
+  g.closePath();
+  g.fill();
+  g.fillStyle = 'rgba(210,242,174,0.6)';
+  g.fillRect(-16, -28, 4, 1);
+  g.fillRect(-14, -19, 3, 1);
+
+  g.fillStyle = '#1d1523';
+  g.beginPath();
+  g.ellipse(5, -19, 12, 9, 0.08, 0, TAU);
+  g.fill();
+  g.fillStyle = '#372843';
+  g.beginPath();
+  g.ellipse(5, -21, 9, 6, 0.08, 0, TAU);
+  g.fill();
+
+  g.fillStyle = '#17101d';
+  g.beginPath();
+  g.moveTo(9, -25);
+  g.lineTo(22, -17);
+  g.lineTo(9, -13);
+  g.closePath();
+  g.fill();
+  g.fillStyle = '#2d2036';
+  g.beginPath();
+  g.moveTo(10, -23);
+  g.lineTo(19, -18);
+  g.lineTo(10, -16);
+  g.closePath();
+  g.fill();
+
+  // Fangs, folded under the face and opened wide on a lunge.
+  g.fillStyle = '#c8d9be';
+  const bite = lunge > 0 ? 3 : 1;
+  g.beginPath();
+  g.moveTo(17, -16);
+  g.lineTo(22 + bite, -11 - bite);
+  g.lineTo(18, -12);
+  g.closePath();
+  g.fill();
+  g.beginPath();
+  g.moveTo(14, -14);
+  g.lineTo(18 - bite, -8 + bite);
+  g.lineTo(16, -13);
+  g.closePath();
+  g.fill();
+
+  // A cluster of red eyes, with a faint glow.
+  g.save();
+  g.globalCompositeOperation = 'lighter';
+  glow(g, 11, -24, 16, '#ff5b3d', 0.36 + lunge * 0.18);
+  glow(g, 18, -21, 10, '#ff8a55', 0.28);
+  g.restore();
+  g.fillStyle = '#ff6a4d';
+  g.fillRect(9, -25, 2, 1);
+  g.fillRect(12, -23, 1, 1);
+  g.fillRect(16, -23, 2, 1);
+  g.fillRect(19, -21, 1, 1);
+  g.fillStyle = '#ffd0a8';
+  g.fillRect(10, -25, 1, 1);
+  g.fillRect(17, -23, 1, 1);
+
+  // Hairs catching the forest light.
+  g.fillStyle = 'rgba(190,220,174,0.28)';
+  for (let i = 0; i < 6; i++) {
+    const hx = -22 + i * 4;
+    g.fillRect(hx, -31 + (i % 3), 1, 2);
+  }
+
+  if (flash > 0) {
+    g.globalCompositeOperation = 'lighter';
+    g.globalAlpha = flash * 0.5;
+    g.fillStyle = '#ffffff';
+    g.fillRect(-31, -38, 62, 38);
+  }
+  g.restore();
+}
+
+// The third level's boss: a broad, shaggy giant with a crown of ice.
+export function drawSnowGiant(g, cx, baseY, t, opts = {}) {
+  const scale = opts.scale || 1;
+  const facing = opts.facing || -1;
+  const flash = opts.flash || 0;
+  const attack = clamp(opts.attack || 0, 0, 1);
+  const stomp = opts.stomp || 0;
+
+  g.save();
+  g.translate(Math.round(cx), Math.round(baseY - stomp * 2));
+  g.scale(facing * scale, scale);
+
+  // Shadow under the wide stance.
+  g.fillStyle = 'rgba(10,18,30,0.48)';
+  g.beginPath();
+  g.ellipse(0, 2, 38, 6, 0, 0, TAU);
+  g.fill();
+
+  const raised = attack > 0 ? Math.sin(attack * Math.PI) : 0;
+  const sway = Math.sin(t * 1.5) * 1.2;
+
+  // Legs and feet.
+  for (const side of [-1, 1]) {
+    g.fillStyle = '#3e5872';
+    g.beginPath();
+    g.ellipse(side * 15, -18, 10, 19, side * 0.06, 0, TAU);
+    g.fill();
+    g.fillStyle = '#b8d2e5';
+    g.beginPath();
+    g.ellipse(side * 15, -20, 8, 15, side * 0.06, 0, TAU);
+    g.fill();
+    g.fillStyle = '#5f7e97';
+    g.beginPath();
+    g.ellipse(side * 17, -4, 15, 6, 0, 0, TAU);
+    g.fill();
+    g.fillStyle = '#dceff8';
+    g.fillRect(side * 17 - 11, -8, 20, 2);
+    g.fillStyle = '#273c54';
+    for (let i = 0; i < 3; i++) {
+      g.fillRect(side * 17 - 9 + i * 7, -2, 5, 2);
+    }
+  }
+
+  // Arms. They rise over the head as the giant commits to the slam.
+  for (const side of [-1, 1]) {
+    const shoulderX = side * 24;
+    const shoulderY = -54;
+    const elbowX = side * (34 + raised * 5);
+    const elbowY = -38 - raised * 10;
+    const handX = side * (35 - raised * 10) + sway * 0.3;
+    const handY = -25 - raised * 43;
+    g.strokeStyle = '#8eafc8';
+    g.lineCap = 'round';
+    g.lineWidth = 11;
+    g.beginPath();
+    g.moveTo(shoulderX, shoulderY);
+    g.lineTo(elbowX, elbowY);
+    g.lineTo(handX, handY);
+    g.stroke();
+    g.strokeStyle = '#c7ddec';
+    g.lineWidth = 7;
+    g.beginPath();
+    g.moveTo(shoulderX - side * 1, shoulderY - 1);
+    g.lineTo(elbowX - side * 1, elbowY - 1);
+    g.lineTo(handX - side * 1, handY - 1);
+    g.stroke();
+
+    // Hands and ice knuckles.
+    g.fillStyle = '#d4e7f3';
+    g.beginPath();
+    g.ellipse(handX, handY, 8, 7, 0, 0, TAU);
+    g.fill();
+    g.fillStyle = '#6f91ab';
+    g.beginPath();
+    g.ellipse(handX + side * 2, handY + 2, 5, 4, 0, 0, TAU);
+    g.fill();
+    g.fillStyle = '#eaf8ff';
+    for (let i = 0; i < 3; i++) {
+      g.beginPath();
+      g.moveTo(handX + side * (2 + i * 3), handY - 3);
+      g.lineTo(handX + side * (5 + i * 3), handY - 10 - (i % 2) * 3);
+      g.lineTo(handX + side * (1 + i * 3), handY - 6);
+      g.closePath();
+      g.fill();
+    }
+    // Icicles hanging from each shoulder.
+    g.fillStyle = '#dff3ff';
+    g.beginPath();
+    g.moveTo(side * 27, -58);
+    g.lineTo(side * 31, -47);
+    g.lineTo(side * 24, -53);
+    g.closePath();
+    g.fill();
+  }
+
+  // Broad torso and the shaggy mantle.
+  g.fillStyle = '#6f91ab';
+  g.beginPath();
+  g.ellipse(0, -37, 31, 29, 0, 0, TAU);
+  g.fill();
+  g.fillStyle = '#c7ddec';
+  g.beginPath();
+  g.ellipse(0, -38, 27, 25, 0, 0, TAU);
+  g.fill();
+  g.fillStyle = '#dcecf6';
+  g.beginPath();
+  g.ellipse(-4, -42, 22, 18, -0.1, 0, TAU);
+  g.fill();
+
+  // Fur tufts along the shoulders and belly.
+  g.fillStyle = '#aec8dc';
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * TAU;
+    const x = Math.cos(a) * 26;
+    const y = -38 + Math.sin(a) * 25;
+    g.beginPath();
+    g.moveTo(x, y);
+    g.lineTo(x + (i % 2 ? 3 : -3), y - 5);
+    g.lineTo(x + (i % 3 ? -2 : 2), y + 2);
+    g.closePath();
+    g.fill();
+  }
+  g.fillStyle = 'rgba(95,126,151,0.55)';
+  g.fillRect(-19, -31, 13, 2);
+  g.fillRect(4, -25, 16, 2);
+  g.fillRect(-10, -18, 18, 1);
+
+  // Head, brow, and the frozen crown.
+  g.fillStyle = '#8eafc8';
+  g.beginPath();
+  g.ellipse(0, -68, 18, 17, 0, 0, TAU);
+  g.fill();
+  g.fillStyle = '#d5e8f4';
+  g.beginPath();
+  g.ellipse(0, -69, 15, 14, 0, 0, TAU);
+  g.fill();
+  g.fillStyle = '#c0d8e8';
+  for (let i = 0; i < 7; i++) {
+    const a = Math.PI * (0.1 + i * 0.13);
+    g.beginPath();
+    g.moveTo(Math.cos(a) * 15, -69 + Math.sin(a) * 13);
+    g.lineTo(Math.cos(a) * 22, -69 + Math.sin(a) * 20);
+    g.lineTo(Math.cos(a) * 18, -69 + Math.sin(a) * 10);
+    g.closePath();
+    g.fill();
+  }
+  // Ice crown.
+  g.fillStyle = '#eaf9ff';
+  for (let i = -2; i <= 2; i++) {
+    g.beginPath();
+    g.moveTo(i * 6 - 3, -81);
+    g.lineTo(i * 6, -94 + Math.abs(i) * 3);
+    g.lineTo(i * 6 + 3, -81);
+    g.closePath();
+    g.fill();
+  }
+  g.fillStyle = '#8fdcf4';
+  g.fillRect(-11, -75, 5, 2);
+  g.fillRect(6, -75, 5, 2);
+  g.fillStyle = '#233b52';
+  g.beginPath();
+  g.ellipse(0, -63, 9, 5, 0, 0, TAU);
+  g.fill();
+  g.fillStyle = '#f4fbff';
+  g.fillRect(-6, -65, 4, 2);
+  g.fillRect(3, -65, 4, 2);
+  g.save();
+  g.globalCompositeOperation = 'lighter';
+  glow(g, -4, -64, 10, '#a9f0ff', 0.5);
+  glow(g, 5, -64, 9, '#a9f0ff', 0.45);
+  g.restore();
+  g.fillStyle = '#a9f0ff';
+  g.fillRect(-5, -65, 2, 2);
+  g.fillRect(4, -65, 2, 2);
+
+  // Snow settled on the shoulders and head.
+  g.fillStyle = '#f4fbff';
+  g.beginPath();
+  g.ellipse(-15, -57, 11, 4, -0.25, 0, TAU);
+  g.fill();
+  g.beginPath();
+  g.ellipse(14, -59, 9, 3, 0.25, 0, TAU);
+  g.fill();
+  g.beginPath();
+  g.ellipse(-5, -81, 12, 3, -0.1, 0, TAU);
+  g.fill();
+
+  // Cold breath while the arms are up.
+  if (raised > 0.15) {
+    g.save();
+    g.globalCompositeOperation = 'lighter';
+    g.globalAlpha = raised * 0.32;
+    for (let i = 0; i < 8; i++) {
+      const k = (t * 0.4 + i / 8) % 1;
+      g.fillStyle = i % 2 ? '#dff6ff' : '#ffffff';
+      g.fillRect(Math.round(8 + k * 26), Math.round(-61 - k * 9 + Math.sin(i) * 2), 2, 1);
+    }
+    g.restore();
+  }
+
+  if (flash > 0) {
+    g.globalCompositeOperation = 'lighter';
+    g.globalAlpha = flash * 0.48;
+    g.fillStyle = '#ffffff';
+    g.fillRect(-45, -96, 90, 96);
+  }
+  g.restore();
+}
+
+// A small dolphin arcing over a cliff bridge.
+export function drawDolphin(g, x, y, angle, scale = 1, alpha = 1) {
+  g.save();
+  g.globalAlpha = alpha;
+  g.translate(Math.round(x), Math.round(y));
+  g.rotate(angle);
+  g.scale(scale, scale);
+
+  // Body and the pale underside.
+  g.fillStyle = '#204752';
+  g.beginPath();
+  g.ellipse(0, 0, 15, 5.4, 0, 0, TAU);
+  g.fill();
+  g.fillStyle = '#2f6670';
+  g.beginPath();
+  g.ellipse(-1, -1.2, 13, 4.2, 0, 0, TAU);
+  g.fill();
+  g.fillStyle = '#a7cbc6';
+  g.beginPath();
+  g.ellipse(2, 2.4, 9.5, 2.2, 0, 0, TAU);
+  g.fill();
+
+  // Snout.
+  g.fillStyle = '#183943';
+  g.beginPath();
+  g.moveTo(11, -2.5);
+  g.lineTo(21, 0);
+  g.lineTo(11, 3);
+  g.closePath();
+  g.fill();
+  g.fillStyle = '#6d9d99';
+  g.fillRect(12, 1, 7, 1);
+
+  // Tail flukes.
+  g.fillStyle = '#173943';
+  g.beginPath();
+  g.moveTo(-13, -1);
+  g.lineTo(-22, -7);
+  g.lineTo(-18, -1);
+  g.lineTo(-22, 7);
+  g.lineTo(-13, 2);
+  g.closePath();
+  g.fill();
+
+  // Dorsal and pectoral fins.
+  g.fillStyle = '#1b414b';
+  g.beginPath();
+  g.moveTo(-2, -4);
+  g.lineTo(1, -12);
+  g.lineTo(6, -3);
+  g.closePath();
+  g.fill();
+  g.beginPath();
+  g.moveTo(2, 4);
+  g.lineTo(-2, 10);
+  g.lineTo(7, 5);
+  g.closePath();
+  g.fill();
+
+  // Eye and the wet highlight along the back.
+  g.fillStyle = '#e8f7f0';
+  g.fillRect(12, -1, 1, 1);
+  g.fillStyle = '#071216';
+  g.fillRect(13, -1, 1, 1);
+  g.strokeStyle = 'rgba(188,226,218,0.55)';
+  g.lineWidth = 1;
+  g.beginPath();
+  g.moveTo(-9, -3);
+  g.quadraticCurveTo(0, -5, 10, -2);
+  g.stroke();
+
+  g.restore();
+}

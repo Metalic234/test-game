@@ -4,7 +4,7 @@ import {
   W, H, TAU, clamp, lerp, damp, rgba, mix, vgrad, glow, disc, makeCanvas, hash1,
 } from './util.js';
 import { drawText, wrapText, textWidth } from './font.js';
-import { GIRL, GIRL_SIT, drawGuardian, drawWisp, drawTeen, drawShield, drawDog, drawScorpion } from './sprites.js';
+import { GIRL, GIRL_SIT, drawGuardian, drawWisp, drawTeen, drawShield, drawDog, drawScorpion, drawSpider, drawSnowGiant, drawDolphin } from './sprites.js';
 import { buildLevel, buildCityScene, groundAt, TOTAL_MEMORIES, LEVEL_COUNT } from './levels.js';
 import { AudioEngine } from './audio.js';
 import { Input } from './input.js';
@@ -131,6 +131,8 @@ export class Game {
     this.combat = null;
     this.whale = null;
     this.whaleDone = false;
+    this.dolphins = [];
+    this.dolphinBridgesDone = new Set();
     this.bob = 0;
 
     this.cam = { x: 0, y: 0 };
@@ -205,6 +207,8 @@ export class Game {
     this.combat = null;
     this.whale = null;
     this.whaleDone = false;
+    this.dolphins = [];
+    this.dolphinBridgesDone = new Set();
     this.hintT = 0;
     this.audio.applyBiome(this.level.theme);
     this.showCard(this.level);
@@ -334,7 +338,7 @@ export class Game {
       this.updateWilds(dt);
       if (this.mode === 'ending') return;
     }
-    this.updateWhale(dt);
+    this.updateSeaLife(dt);
     if (this.level.lookoutX && !this.lookedOut && this.player.x >= this.level.lookoutX) {
       this.beginLookout();
       return;
@@ -1679,12 +1683,33 @@ export class Game {
       dir: i % 2 ? -1 : 1,
       moving: false,
     }));
+    const spiders = (L.spiders || []).map((d, i) => ({
+      id: `spider-${i}`,
+      x: d.home ?? d.x,
+      home: d.home ?? d.x,
+      hp: 6,
+      maxHp: 6,
+      alive: true,
+      flash: 0,
+      biteCd: 0.4 + i * 0.19,
+      lungeT: 0,
+      lungeCd: 0.8 + i * 0.25,
+      lungeHit: true,
+      pause: 0,
+      dir: i % 2 ? -1 : 1,
+      moving: false,
+    }));
     const cfg = L.boss;
+    const kind = cfg && cfg.kind ? cfg.kind : 'scorpion';
     const boss = cfg ? {
-      id: 'scorpion',
+      id: kind,
+      kind,
+      name: cfg.name || (kind === 'giant' ? 'THE SNOW GIANT' : 'THE SCORPION'),
+      subtitle: cfg.subtitle || (kind === 'giant' ? 'THE PASS ITSELF' : 'THE OLD KEEPER OF THE DUNES'),
+      color: cfg.color || (kind === 'giant' ? '#b9dff2' : '#d28a52'),
       x: cfg.x,
-      hp: 160,
-      maxHp: 160,
+      hp: cfg.hp || (kind === 'giant' ? 240 : 160),
+      maxHp: cfg.hp || (kind === 'giant' ? 240 : 160),
       alive: true,
       active: false,
       intro: 0,
@@ -1697,6 +1722,10 @@ export class Game {
       clawT: 0,
       clawMax: 0.55,
       clawHit: true,
+      slamT: 0,
+      slamMax: 1.0,
+      slamX: cfg.x,
+      slamHit: true,
       facing: -1,
       stomp: 0,
     } : null;
@@ -1706,6 +1735,7 @@ export class Game {
       hurt: 0,
       invuln: 0,
       dogs,
+      spiders,
       boss,
       bossDefeated: false,
       bossStarted: false,
@@ -1729,6 +1759,7 @@ export class Game {
     this.beats = [];
     this.player.facing = 1;
     this.audio.play('power');
+    const pale = b.kind === 'giant';
     for (let i = 0; i < 44; i++) {
       const a = Math.random() * TAU;
       const sp = 14 + Math.random() * 58;
@@ -1739,7 +1770,9 @@ export class Game {
         vx: Math.cos(a) * sp,
         vy: Math.sin(a) * sp * 0.4 - 12,
         size: Math.random() < 0.2 ? 2 : 1,
-        color: i % 3 ? '#d4a06a' : '#f4d9a8',
+        color: pale
+          ? (i % 3 ? '#b9dff2' : '#f4fbff')
+          : (i % 3 ? '#d4a06a' : '#f4d9a8'),
         max: 0.6 + Math.random() * 0.9,
         grav: 42,
         drag: 0.95,
@@ -1791,12 +1824,69 @@ export class Game {
       dog.x = clamp(dog.x, 16, L.width - 16);
     }
 
-    if (c.boss && c.boss.active && c.boss.alive) this.updateScorpion(dt);
+    // The forest spiders are skittish until she comes close, then they skitter
+    // and throw themselves at her. They are physical enemies, like the dogs.
+    for (const spider of c.spiders) {
+      spider.flash = Math.max(0, spider.flash - dt * 4);
+      spider.biteCd = Math.max(0, spider.biteCd - dt);
+      spider.lungeCd = Math.max(0, spider.lungeCd - dt);
+      if (!spider.alive) continue;
+      const gy = groundAt(L, spider.x);
+      const dx = p.x - spider.x;
+      const close = Math.abs(dx) < 210 && Math.abs(p.y - gy) < 46;
+      if (spider.lungeT > 0) {
+        spider.lungeT = Math.max(0, spider.lungeT - dt);
+        spider.moving = true;
+        spider.x += spider.dir * 180 * dt;
+        if (!spider.lungeHit && Math.abs(p.x - spider.x) < 22 && Math.abs(p.y - gy) < 30) {
+          spider.lungeHit = true;
+          this.audio.play('spiderBite');
+          this.hurtWilds(8, spider.x);
+          spider.biteCd = 1.25;
+        }
+      } else if (close) {
+        spider.moving = true;
+        spider.dir = Math.sign(dx) || spider.dir;
+        if (Math.abs(dx) < 26) {
+          if (spider.biteCd <= 0) {
+            this.audio.play('spiderBite');
+            this.hurtWilds(8, spider.x);
+            spider.biteCd = 1.25;
+          }
+        } else if (Math.abs(dx) < 92 && spider.lungeCd <= 0) {
+          spider.lungeT = 0.24;
+          spider.lungeHit = false;
+          spider.lungeCd = 1.7;
+          this.audio.play('spiderHiss');
+        } else {
+          spider.x += spider.dir * 48 * dt;
+        }
+      } else {
+        spider.pause -= dt;
+        if (spider.pause <= 0) {
+          if (Math.abs(spider.x - spider.home) > 46) spider.dir = Math.sign(spider.home - spider.x) || spider.dir;
+          else {
+            spider.dir = Math.random() < 0.5 ? -1 : 1;
+            spider.pause = 0.45 + Math.random() * 0.9;
+          }
+        }
+        spider.x += spider.dir * 15 * dt;
+        spider.moving = true;
+      }
+      spider.x = clamp(spider.x, 16, L.width - 16);
+    }
+
+    if (c.boss && c.boss.active && c.boss.alive) {
+      if (c.boss.kind === 'giant') this.updateGiant(dt);
+      else this.updateScorpion(dt);
+    }
 
     if (this.input.consume('shard')) this.throwWildsShards();
     c.beamDir = p.facing || 1;
     c.beamOn = this.input.down('laser') && (
-      c.dogs.some((dog) => dog.alive) || (c.boss && c.boss.active && c.boss.alive)
+      c.dogs.some((dog) => dog.alive)
+      || c.spiders.some((spider) => spider.alive)
+      || (c.boss && c.boss.active && c.boss.alive)
     );
     if (c.beamOn) {
       c.beamTick += dt;
@@ -1813,7 +1903,7 @@ export class Game {
       shard.life += dt;
       const target = shard.target;
       if (!target || !target.alive || shard.life > 2.0) continue;
-      const ty = groundAt(L, target.x) - (target === c.boss ? 28 : 9);
+      const ty = groundAt(L, target.x) - (target === c.boss ? (c.boss.kind === 'giant' ? 48 : 28) : 9);
       const dx = target.x - shard.x;
       const dy = ty - shard.y;
       const len = Math.max(1, Math.hypot(dx, dy));
@@ -1902,6 +1992,77 @@ export class Game {
     }
   }
 
+  updateGiant(dt) {
+    const c = this.combat;
+    const b = c.boss;
+    const L = this.level;
+    const p = this.player;
+    b.flash = Math.max(0, b.flash - dt * 3.8);
+    b.stomp = Math.max(0, b.stomp - dt);
+    b.intro = Math.max(0, b.intro - dt);
+    b.x = clamp(b.x, L.boss.arenaMin + 30, Math.min(L.boss.arenaMax - 30, L.width - 42));
+    b.y = groundAt(L, b.x);
+    b.facing = Math.sign(p.x - b.x) || b.facing;
+    if (b.intro > 0) return;
+
+    const dx = p.x - b.x;
+    if (Math.abs(dx) > 118) b.x += Math.sign(dx) * 34 * dt;
+    if (Math.abs(dx) < 42 && c.invuln <= 0 && Math.abs(p.y - b.y) < 34) {
+      this.hurtWilds(10, b.x);
+    }
+
+    if (b.slamT > 0) {
+      b.slamT = Math.max(0, b.slamT - dt);
+      if (b.slamT <= 0 && !b.slamHit) {
+        b.slamHit = true;
+        b.stomp = 0.8;
+        const hit = Math.abs(p.x - b.slamX) < 68 && Math.abs(p.y - b.y) < 50;
+        if (hit) this.hurtWilds(20, b.slamX);
+        this.audio.play('maceSlam');
+        for (let i = 0; i < 34; i++) {
+          const side = i % 2 ? 1 : -1;
+          this.spawn({
+            type: i % 3 ? 'snow' : 'spark',
+            x: b.slamX + side * (2 + Math.random() * 28),
+            y: groundAt(L, b.slamX) - 2,
+            vx: side * (18 + Math.random() * 74),
+            vy: -18 - Math.random() * 58,
+            size: i % 5 ? 1 : 2,
+            color: i % 2 ? '#dff3ff' : '#ffffff',
+            max: 0.45 + Math.random() * 0.55,
+            grav: 54,
+            drag: 0.94,
+          });
+        }
+        for (let i = 0; i < 18; i++) {
+          this.spawn({
+            type: 'smoke',
+            x: b.slamX + (Math.random() - 0.5) * 66,
+            y: groundAt(L, b.slamX) - 4 - Math.random() * 10,
+            vx: (Math.random() - 0.5) * 30,
+            vy: -8 - Math.random() * 16,
+            size: 2 + Math.floor(Math.random() * 3),
+            color: '#dbe8f4',
+            max: 0.5 + Math.random() * 0.7,
+            alpha: 0.28,
+            drag: 0.95,
+          });
+        }
+      }
+    } else {
+      b.attackCd -= dt;
+      if (b.attackCd <= 0) {
+        const dir = p.x < b.x ? -1 : 1;
+        const gap = Math.abs(p.x - b.x);
+        b.slamX = b.x + dir * Math.min(112, gap);
+        b.slamT = b.slamMax;
+        b.slamHit = false;
+        this.audio.play('maceUp');
+        b.attackCd = 2.15 + Math.random() * 0.75;
+      }
+    }
+  }
+
   hurtWilds(amount, sourceX) {
     const c = this.combat;
     if (!c || c.invuln > 0 || this.mode === 'ending') return;
@@ -1944,6 +2105,14 @@ export class Game {
         target = dog;
       }
     }
+    for (const spider of c.spiders) {
+      if (!spider.alive) continue;
+      const d = Math.abs(spider.x - p.x);
+      if (d < best) {
+        best = d;
+        target = spider;
+      }
+    }
     if (c.boss && c.boss.active && c.boss.alive) {
       const d = Math.abs(c.boss.x - p.x);
       if (d < best) target = c.boss;
@@ -1953,7 +2122,7 @@ export class Game {
     for (let i = 0; i < 3; i++) {
       const sx = p.x + p.facing * 8;
       const sy = p.y - 20 + (i - 1) * 3;
-      const ty = groundAt(this.level, target.x) - (target === c.boss ? 28 : 9);
+      const ty = groundAt(this.level, target.x) - (target === c.boss ? (c.boss.kind === 'giant' ? 48 : 28) : 9);
       const dx = target.x - sx;
       const dy = ty - sy;
       const len = Math.max(1, Math.hypot(dx, dy));
@@ -1998,10 +2167,18 @@ export class Game {
         this.damageWilds(dog, 6, dog.x, groundAt(L, dog.x) - 9);
       }
     }
+    for (const spider of c.spiders) {
+      if (!spider.alive) continue;
+      const ahead = (spider.x - p.x) * dir;
+      if (ahead > -10 && ahead < 430 && Math.abs(groundAt(L, spider.x) - 17 - beamY) < 58) {
+        this.damageWilds(spider, 6, spider.x, groundAt(L, spider.x) - 15);
+      }
+    }
     if (c.boss && c.boss.active && c.boss.alive) {
       const ahead = (c.boss.x - p.x) * dir;
-      if (ahead > -10 && ahead < 540 && Math.abs(groundAt(L, c.boss.x) - 32 - beamY) < 76) {
-        this.damageWilds(c.boss, 3, c.boss.x - 12, groundAt(L, c.boss.x) - 28);
+      const bossH = c.boss.kind === 'giant' ? 48 : 32;
+      if (ahead > -10 && ahead < 540 && Math.abs(groundAt(L, c.boss.x) - bossH - beamY) < 76) {
+        this.damageWilds(c.boss, 3, c.boss.x - 12, groundAt(L, c.boss.x) - bossH);
       }
     }
   }
@@ -2062,6 +2239,7 @@ export class Game {
     c.bossDefeated = true;
     c.beamOn = false;
     c.shards.length = 0;
+    const giant = b.kind === 'giant';
     this.audio.play('blast');
     for (let i = 0; i < 64; i++) {
       const a = Math.random() * TAU;
@@ -2073,16 +2251,20 @@ export class Game {
         vx: Math.cos(a) * sp,
         vy: Math.sin(a) * sp - 16,
         size: i % 4 === 0 ? 2 : 1,
-        color: i % 3 ? '#e0a060' : '#fff0d0',
+        color: i % 3
+          ? (giant ? '#cfeaff' : '#e0a060')
+          : (giant ? '#ffffff' : '#fff0d0'),
         max: 0.7 + Math.random() * 0.9,
         grav: 24,
         drag: 0.95,
       });
     }
     this.note = {
-      title: 'THE SCORPION',
-      text: 'It folds its legs and becomes part of the sand. The way south is open.',
-      color: '#e0a060',
+      title: b.name || 'THE SCORPION',
+      text: giant
+        ? 'The snow giant kneels, and the pass is quiet. The way north is open.'
+        : 'It folds its legs and becomes part of the sand. The way south is open.',
+      color: b.color || '#e0a060',
       t: 0,
       typed: 0,
     };
@@ -2093,14 +2275,45 @@ export class Game {
     if (this.mode === 'ending') return;
     this.combat = null;
     this.mode = 'ending';
+    const deaths = {
+      forest: {
+        name: 'THE ENCHANTED FOREST',
+        lines: [
+          'THE SPIDERS DRAW THEIR SILK ACROSS THE PATH.',
+          'THE FOREST IS VERY QUIET AGAIN.',
+          'IT WILL KEEP HER THIS TIME.',
+        ],
+      },
+      desert: {
+        name: 'THE FORGOTTEN DESERT',
+        lines: [
+          'THE BLACK DOGS CLOSE THE CIRCLE.',
+          'THE DUNES TAKE HER WEIGHT, AND THEN THEY TAKE THE REST.',
+          'THE DESERT WILL KEEP HER THIS TIME.',
+        ],
+      },
+      mountain: {
+        name: 'THE FROZEN MOUNTAIN',
+        lines: [
+          'THE GIANT PUTS ITS WEIGHT BEHIND THE BLOW.',
+          'THE SNOW FALLS OVER HER WITHOUT A SOUND.',
+          'THE MOUNTAIN WILL KEEP HER THIS TIME.',
+        ],
+      },
+      mainland: {
+        name: 'THE MAINLAND',
+        lines: [
+          'THE DUNES TAKE HER WEIGHT, AND THEN THEY TAKE THE REST.',
+          'THE BLACK DOGS ARE ALREADY GONE. THE SCORPION IS STILL WAITING.',
+          'THE MAINLAND WILL KEEP HER THIS TIME.',
+        ],
+      },
+    };
+    const death = deaths[this.level.id] || deaths.mainland;
     this.ending = {
-      name: 'THE MAINLAND',
+      name: death.name,
       continued: true,
-      lines: [
-        'THE DUNES TAKE HER WEIGHT, AND THEN THEY TAKE THE REST.',
-        'THE BLACK DOGS ARE ALREADY GONE. THE SCORPION IS STILL WAITING.',
-        'THE MAINLAND WILL KEEP HER THIS TIME.',
-      ],
+      lines: death.lines,
       count: this.found.size,
       powers: this.powers.size,
       t: 0,
@@ -2108,7 +2321,7 @@ export class Game {
     this.fade = 1;
     this.fadeTarget = 0;
     this.audio.play('transition');
-    this.audio.applyBiome('mainland');
+    this.audio.applyBiome(this.level.theme);
   }
 
   beginStoryEnding() {
@@ -2134,14 +2347,38 @@ export class Game {
     this.audio.play('ending');
   }
 
-  updateWhale(dt) {
+  updateSeaLife(dt) {
     if (!this.level || !this.level.cliffs) return;
+
+    // A pod of dolphins on each bridge that is not reserved for the whale.
+    for (const bridgeIndex of this.level.dolphinBridges) {
+      if (this.dolphinBridgesDone.has(bridgeIndex)) continue;
+      const bridge = this.level.bridges[bridgeIndex];
+      if (!bridge) continue;
+      if (this.player.x > bridge.x + 24 && this.player.x < bridge.x + bridge.w - 24) {
+        this.dolphinBridgesDone.add(bridgeIndex);
+        for (let i = 0; i < 2; i++) {
+          this.dolphins.push({
+            t: -i * 0.34,
+            bridge,
+            lane: i,
+            scale: i ? 0.9 : 1.05,
+          });
+        }
+      }
+    }
+    const keep = [];
+    for (const dolphin of this.dolphins) {
+      dolphin.t += dt;
+      if (dolphin.t < 3.2) keep.push(dolphin);
+    }
+    this.dolphins = keep;
+
     if (this.whale) {
       this.whale.t += dt;
       if (this.whale.t > 3.6) this.whale = null;
-      return;
     }
-    if (this.whaleDone || this.level.whaleBridge == null) return;
+    if (this.whale || this.whaleDone || this.level.whaleBridge == null) return;
     const b = this.level.bridges[this.level.whaleBridge];
     if (!b) return;
     if (this.player.x > b.x + 24 && this.player.x < b.x + b.w - 24) {
@@ -3207,6 +3444,7 @@ export class Game {
     this.drawPlayer(g);
     if (this.combat) this.drawWildsFront(g);
     if (this.whale) this.drawWhale(g);
+    if (this.dolphins.length) this.drawDolphins(g);
     if (this.level.foreground) {
       const x = Math.round(this.cam.x);
       g.drawImage(this.level.foreground, x, 0, Math.min(W, this.level.width - x), H, 0, 0, Math.min(W, this.level.width - x), H);
@@ -3219,49 +3457,92 @@ export class Game {
     if (!c) return;
     const boss = c.boss;
 
-    // The scorpion waits at the far end of the dunes, then fills the screen.
+    // The snow giant fills the pass; the scorpion fills the dunes.
     if (boss && boss.alive && (boss.active || this.player.x > L.boss.triggerX - 300)) {
       const bx = boss.x - this.cam.x;
-      if (bx > -150 && bx < W + 150) {
-        drawScorpion(g, bx, groundAt(L, boss.x), this.time, {
-          scale: 1.08,
-          facing: boss.facing,
-          flash: boss.flash,
-          stomp: boss.stomp,
-          sting: boss.stingT > 0 ? 1 : 0,
-          claw: boss.clawT > 0 ? 1 : 0,
-        });
-        if (boss.stingT > 0) {
-          const k = clamp(1 - boss.stingT / boss.stingMax, 0, 1);
-          const mx = boss.stingX - this.cam.x;
-          const my = groundAt(L, boss.stingX) - 2;
-          if (mx > -50 && mx < W + 50) {
+      if (bx > -160 && bx < W + 160) {
+        if (boss.kind === 'giant') {
+          const attack = boss.slamT > 0 ? 1 - boss.slamT / boss.slamMax : 0;
+          drawSnowGiant(g, bx, groundAt(L, boss.x), this.time, {
+            scale: 1.12,
+            facing: boss.facing,
+            flash: boss.flash,
+            attack,
+            stomp: boss.stomp,
+          });
+          if (boss.slamT > 0) {
+            const k = clamp(1 - boss.slamT / boss.slamMax, 0, 1);
+            const mx = boss.slamX - this.cam.x;
+            const my = groundAt(L, boss.slamX) - 2;
+            if (mx > -70 && mx < W + 70) {
+              g.save();
+              g.globalCompositeOperation = 'lighter';
+              g.globalAlpha = 0.25 + k * 0.55;
+              glow(g, mx, my - 6, 22 + k * 32, '#bfe6ff', 0.52);
+              g.strokeStyle = 'rgba(207,238,255,0.9)';
+              g.lineWidth = 1;
+              g.beginPath();
+              g.ellipse(mx, my, 28 + k * 30, 5, 0, 0, TAU);
+              g.stroke();
+              g.fillStyle = 'rgba(210,240,255,0.5)';
+              g.fillRect(Math.round(mx), Math.round(my) - 52, 1, 46);
+              g.restore();
+            }
+          }
+          if (boss.stomp > 0) {
+            const q = clamp(1 - boss.stomp / 0.8, 0, 1);
+            const my = groundAt(L, boss.slamX) - 2;
             g.save();
             g.globalCompositeOperation = 'lighter';
-            g.globalAlpha = 0.3 + k * 0.55;
-            glow(g, mx, my - 8, 16 + k * 24, '#ff6a3c', 0.55);
-            g.strokeStyle = '#ffb07a';
-            g.lineWidth = 1;
+            g.globalAlpha = 0.3 * (1 - q);
+            g.strokeStyle = '#dff3ff';
+            g.lineWidth = 2;
             g.beginPath();
-            g.ellipse(mx, my, 34 - k * 8, 5, 0, 0, TAU);
+            g.ellipse(boss.slamX - this.cam.x, my, 38 + q * 78, 7 + q * 12, 0, 0, TAU);
             g.stroke();
-            g.fillStyle = 'rgba(255,176,122,0.55)';
-            g.fillRect(Math.round(mx), Math.round(my) - 42, 1, 36);
             g.restore();
           }
-        }
-        if (boss.clawT > 0) {
-          const k = clamp(1 - boss.clawT / boss.clawMax, 0, 1);
-          const my = groundAt(L, boss.x) - 2;
-          g.save();
-          g.globalCompositeOperation = 'lighter';
-          g.globalAlpha = 0.25 + k * 0.45;
-          g.strokeStyle = '#e0a060';
-          g.lineWidth = 2;
-          g.beginPath();
-          g.ellipse(bx - 30, my, 54 + k * 24, 8, 0, 0, TAU);
-          g.stroke();
-          g.restore();
+        } else {
+          drawScorpion(g, bx, groundAt(L, boss.x), this.time, {
+            scale: 1.08,
+            facing: boss.facing,
+            flash: boss.flash,
+            stomp: boss.stomp,
+            sting: boss.stingT > 0 ? 1 : 0,
+            claw: boss.clawT > 0 ? 1 : 0,
+          });
+          if (boss.stingT > 0) {
+            const k = clamp(1 - boss.stingT / boss.stingMax, 0, 1);
+            const mx = boss.stingX - this.cam.x;
+            const my = groundAt(L, boss.stingX) - 2;
+            if (mx > -50 && mx < W + 50) {
+              g.save();
+              g.globalCompositeOperation = 'lighter';
+              g.globalAlpha = 0.3 + k * 0.55;
+              glow(g, mx, my - 8, 16 + k * 24, '#ff6a3c', 0.55);
+              g.strokeStyle = '#ffb07a';
+              g.lineWidth = 1;
+              g.beginPath();
+              g.ellipse(mx, my, 34 - k * 8, 5, 0, 0, TAU);
+              g.stroke();
+              g.fillStyle = 'rgba(255,176,122,0.55)';
+              g.fillRect(Math.round(mx), Math.round(my) - 42, 1, 36);
+              g.restore();
+            }
+          }
+          if (boss.clawT > 0) {
+            const k = clamp(1 - boss.clawT / boss.clawMax, 0, 1);
+            const my = groundAt(L, boss.x) - 2;
+            g.save();
+            g.globalCompositeOperation = 'lighter';
+            g.globalAlpha = 0.25 + k * 0.45;
+            g.strokeStyle = '#e0a060';
+            g.lineWidth = 2;
+            g.beginPath();
+            g.ellipse(bx - 30, my, 54 + k * 24, 8, 0, 0, TAU);
+            g.stroke();
+            g.restore();
+          }
         }
       }
     }
@@ -3275,6 +3556,19 @@ export class Game {
         flash: dog.flash,
         moving: dog.moving,
         run: dog.x * 0.01,
+      });
+    }
+
+    for (const spider of c.spiders) {
+      if (!spider.alive) continue;
+      const sx = spider.x - this.cam.x;
+      if (sx < -90 || sx > W + 90) continue;
+      drawSpider(g, sx, groundAt(L, spider.x), this.time, {
+        facing: spider.dir,
+        flash: spider.flash,
+        moving: spider.moving,
+        run: spider.x * 0.013,
+        lunge: spider.lungeT > 0 ? 1 : 0,
       });
     }
 
@@ -3356,18 +3650,19 @@ export class Game {
     const bossAlive = boss && boss.active && boss.alive;
 
     if (bossAlive) {
+      const bossColor = boss.color || '#d28a52';
       g.save();
       g.fillStyle = 'rgba(3,4,10,0.7)';
       g.fillRect(68, 4, W - 136, 38);
-      drawText(g, 'THE SCORPION', W / 2, 6, {
-        align: 'center', color: '#e8c08c', scale: 1, spacing: 2, shadow: '#000000',
+      drawText(g, boss.name || 'THE SCORPION', W / 2, 6, {
+        align: 'center', color: bossColor, scale: 1, spacing: 2, shadow: '#000000',
       });
-      drawText(g, 'THE OLD KEEPER OF THE DUNES', W / 2, 17, {
+      drawText(g, boss.subtitle || 'THE OLD KEEPER OF THE DUNES', W / 2, 17, {
         align: 'center', color: '#9c8068', scale: 1, spacing: 1, shadow: '#000000',
       });
       g.fillStyle = 'rgba(150,120,100,0.25)';
       g.fillRect(176, 29, 128, 5);
-      g.fillStyle = '#d28a52';
+      g.fillStyle = bossColor;
       g.fillRect(176, 29, Math.max(0, Math.round(128 * boss.hp / boss.maxHp)), 5);
       g.fillStyle = 'rgba(255,230,190,0.3)';
       g.fillRect(176, 29, 128, 1);
@@ -3388,11 +3683,14 @@ export class Game {
       g.fillStyle = `rgba(255,255,255,${0.45 * c.hurt})`;
       g.fillRect(10, H - 33, 76, 3);
     }
+    const hasFoes = c.dogs.some((dog) => dog.alive)
+      || c.spiders.some((spider) => spider.alive)
+      || (boss && boss.alive);
     const hint = bossAlive
       ? 'W JUMP   SHIFT DASH   X SHARDS   C KNIGHTS\' BEAM'
-      : c.dogs.some((dog) => dog.alive)
+      : hasFoes
         ? 'X SHARDS   C KNIGHTS\' BEAM   W JUMP'
-        : 'THE WAY SOUTH IS OPEN';
+        : 'THE WAY IS OPEN';
     drawText(g, hint, W / 2, H - 16, {
       align: 'center', color: bossAlive ? '#f0d4b0' : '#e2d4c0', scale: 1, spacing: 1, shadow: '#000000',
     });
@@ -3510,6 +3808,36 @@ export class Game {
       g.fillRect(Math.round(dx), Math.round(dy), 1, 1);
     }
     g.restore();
+  }
+
+  drawDolphins(g) {
+    for (const d of this.dolphins) {
+      if (d.t < 0) continue;
+      const b = d.bridge;
+      const k = clamp(d.t / 2.8, 0, 1);
+      const arc = Math.sin(k * Math.PI);
+      const lane = d.lane || 0;
+      const center = b.x + b.w * (0.34 + lane * 0.30);
+      const x = center + (k - 0.5) * 20 - this.cam.x;
+      const y = 286 - arc * (118 + lane * 10);
+      if (x < -70 || x > W + 70) continue;
+
+      // A small burst of water where the dolphin leaves the cut.
+      if (arc > 0.04) {
+        g.save();
+        g.globalCompositeOperation = 'lighter';
+        for (let i = 0; i < 9; i++) {
+          const a = -Math.PI * (0.18 + (i / 9) * 0.64);
+          const r = 7 + (i % 4) * 4 + arc * 12;
+          g.globalAlpha = arc * (0.15 + (i % 3) * 0.06);
+          g.fillStyle = i % 3 ? '#a9d0cc' : '#ffffff';
+          g.fillRect(Math.round(center - this.cam.x + Math.cos(a) * r), Math.round(254 + Math.sin(a) * r), 1, 2);
+        }
+        g.restore();
+      }
+
+      drawDolphin(g, x, y, -Math.cos(k * Math.PI) * 0.48, d.scale || 1, clamp(0.4 + arc, 0, 1));
+    }
   }
 
   drawPowerSite(g) {
@@ -4123,7 +4451,7 @@ export class Game {
       const a = clamp(this.hintT < 7 ? 1 : 9 - this.hintT, 0, 1) * 0.85;
       g.save();
       g.globalAlpha = a;
-      drawText(g, 'A D WALK   W JUMP   E REMEMBER / SPEND   SHIFT DASH', W / 2, H - 18, {
+      drawText(g, 'A D WALK   W JUMP   E REMEMBER / SPEND   SHIFT DASH   X SHARDS   C BEAM', W / 2, H - 30, {
         align: 'center', color: '#b8b0c4', scale: 1,
       });
       g.restore();
