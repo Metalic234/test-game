@@ -4,7 +4,7 @@ import {
   W, H, TAU, clamp, lerp, damp, rgba, mix, vgrad, glow, disc, makeCanvas, hash1,
 } from './util.js';
 import { drawText, wrapText, textWidth } from './font.js';
-import { GIRL, GIRL_SIT, drawGuardian, drawWisp, drawTeen, drawShield, drawDog, drawScorpion, drawSpider, drawSnowGiant, drawDolphin } from './sprites.js';
+import { GIRL, GIRL_SIT, drawGuardian, drawWisp, drawTeen, drawShield, drawDog, drawCrab, drawScorpion, drawSpider, drawSnowGiant, drawDolphin } from './sprites.js';
 import { buildLevel, buildCityScene, groundAt, TOTAL_MEMORIES, LEVEL_COUNT } from './levels.js';
 import { AudioEngine } from './audio.js';
 import { Input } from './input.js';
@@ -225,6 +225,38 @@ export class Game {
     }
   }
 
+  // A death returns her to the beginning of the stage she died in, not the
+  // beginning of the journey. Memories and powers already found stay found.
+  retryStage() {
+    const index = this.levelIndex;
+    this.mode = 'play';
+    this.ending = null;
+    this.finale = null;
+    this.bossBattle = null;
+    this.note = null;
+    this.paused = false;
+    this.fade = 1;
+    this.fadeTarget = 0;
+    this.frozen = false;
+    this.loadLevel(index);
+    this.audio.applyBiome(this.level.theme);
+    this.audio.play('transition');
+  }
+
+  // The last street works the same way: retry the fight, not the journey.
+  retryFinale() {
+    this.mode = 'play';
+    this.ending = null;
+    this.finale = null;
+    this.bossBattle = null;
+    this.note = null;
+    this.paused = false;
+    this.fade = 1;
+    this.fadeTarget = 0;
+    this.frozen = false;
+    this.beginFinale();
+  }
+
   // ---------------------------------------------------------------- loop
   start() {
     this.last = performance.now();
@@ -274,7 +306,9 @@ export class Game {
       this.updateParticles(dt);
       this.ending.t += dt;
       if (this.ending.t > 3 && (this.input.pressed('restart') || this.input.pressed('interact'))) {
-        this.startGame();
+        if (this.ending.retryFinale) this.retryFinale();
+        else if (this.ending.retry) this.retryStage();
+        else this.startGame();
       }
       return;
     }
@@ -1545,7 +1579,8 @@ export class Game {
       this.startGame();
       return;
     }
-    if (v.t > 25.6 && (this.input.consume('interact') || v.t > 30.5)) {
+    // E skips the voyage at any point; the ending card remains a second exit.
+    if (this.input.consume('interact') || v.t > 30.5) {
       this.finishVoyage();
     }
   }
@@ -1579,6 +1614,20 @@ export class Game {
       lungeT: 0,
       lungeCd: 0.8 + i * 0.25,
       lungeHit: true,
+      pause: 0,
+      dir: i % 2 ? -1 : 1,
+      moving: false,
+    }));
+    const crabs = (L.crabs || []).map((d, i) => ({
+      id: `crab-${i}`,
+      x: d.home ?? d.x,
+      home: d.home ?? d.x,
+      hp: 4,
+      maxHp: 4,
+      alive: true,
+      flash: 0,
+      biteCd: 0.6 + (i % 4) * 0.13,
+      pinchT: 0,
       pause: 0,
       dir: i % 2 ? -1 : 1,
       moving: false,
@@ -1620,6 +1669,7 @@ export class Game {
       invuln: 0,
       dogs,
       spiders,
+      crabs,
       boss,
       bossDefeated: false,
       bossStarted: false,
@@ -1707,6 +1757,39 @@ export class Game {
       dog.x = clamp(dog.x, 16, L.width - 16);
     }
 
+    // Green-cliff crabs: low, quick, and far more numerous than the other
+    // beasts. They rush in sideways and pinch at anything that comes near.
+    for (const crab of c.crabs) {
+      crab.flash = Math.max(0, crab.flash - dt * 4);
+      crab.biteCd = Math.max(0, crab.biteCd - dt);
+      crab.pinchT = Math.max(0, crab.pinchT - dt);
+      if (!crab.alive) continue;
+      const gy = groundAt(L, crab.x);
+      const dx = p.x - crab.x;
+      const close = Math.abs(dx) < 170 && Math.abs(p.y - gy) < 38;
+      crab.moving = true;
+      if (close) {
+        crab.dir = Math.sign(dx) || crab.dir;
+        if (Math.abs(dx) < 21 && Math.abs(p.y - gy) < 24 && crab.biteCd <= 0) {
+          this.audio.play('crabPinch');
+          if (this.hurtWilds(6, crab.x)) crab.pinchT = 0.22;
+          crab.biteCd = 1.1;
+        }
+        if (Math.abs(dx) > 17) crab.x += crab.dir * 34 * dt;
+      } else {
+        crab.pause -= dt;
+        if (crab.pause <= 0) {
+          if (Math.abs(crab.x - crab.home) > 42) crab.dir = Math.sign(crab.home - crab.x) || crab.dir;
+          else {
+            crab.dir = Math.random() < 0.5 ? -1 : 1;
+            crab.pause = 0.55 + Math.random() * 0.9;
+          }
+        }
+        crab.x += crab.dir * 15 * dt;
+      }
+      crab.x = clamp(crab.x, 16, L.width - 16);
+    }
+
     // The forest spiders are skittish until she comes close, then they skitter
     // and throw themselves at her. They are physical enemies, like the dogs.
     for (const spider of c.spiders) {
@@ -1785,6 +1868,7 @@ export class Game {
     c.beamOn = this.input.down('laser') && (
       c.dogs.some((dog) => dog.alive)
       || c.spiders.some((spider) => spider.alive)
+      || c.crabs.some((crab) => crab.alive)
       || (c.boss && c.boss.active && c.boss.alive)
     );
     if (c.beamOn) {
@@ -2027,6 +2111,14 @@ export class Game {
         target = spider;
       }
     }
+    for (const crab of c.crabs) {
+      if (!crab.alive) continue;
+      const d = Math.abs(crab.x - p.x);
+      if (d < best) {
+        best = d;
+        target = crab;
+      }
+    }
     if (c.boss && c.boss.active && c.boss.alive) {
       const d = Math.abs(c.boss.x - p.x);
       if (d < best) target = c.boss;
@@ -2086,6 +2178,13 @@ export class Game {
       const ahead = (spider.x - p.x) * dir;
       if (ahead > -10 && ahead < 430 && Math.abs(groundAt(L, spider.x) - 17 - beamY) < 58) {
         this.damageWilds(spider, 6, spider.x, groundAt(L, spider.x) - 15);
+      }
+    }
+    for (const crab of c.crabs) {
+      if (!crab.alive) continue;
+      const ahead = (crab.x - p.x) * dir;
+      if (ahead > -10 && ahead < 430 && Math.abs(groundAt(L, crab.x) - 12 - beamY) < 58) {
+        this.damageWilds(crab, 6, crab.x, groundAt(L, crab.x) - 10);
       }
     }
     if (c.boss && c.boss.active && c.boss.alive) {
@@ -2241,11 +2340,21 @@ export class Game {
           'THE MAINLAND WILL KEEP HER THIS TIME.',
         ],
       },
+      cliffs: {
+        name: 'THE GREEN CLIFFS',
+        lines: [
+          'THE CRABS COME OVER THE LIP OF THE CLIFF IN A SCUTTLING WAVE.',
+          'THE BRIDGES CREAK, AND THEN THERE IS ONLY THE WATER BELOW.',
+          'THE CLIFFS WILL KEEP HER THIS TIME.',
+        ],
+      },
     };
     const death = deaths[this.level.id] || deaths.mainland;
     this.ending = {
       name: death.name,
       continued: true,
+      retry: true,
+      prompt: 'PRESS E TO TRY THIS STAGE AGAIN',
       lines: death.lines,
       count: this.found.size,
       powers: this.powers.size,
@@ -2727,6 +2836,15 @@ export class Game {
     drawText(g, 'THE LONG WAY OUT', W / 2, 12, {
       align: 'center', color: 'rgba(190,204,222,0.55)', scale: 1, spacing: 3,
     });
+    if (t < 25.6) {
+      const skipPulse = 0.5 + Math.sin(this.time * 2.2) * 0.16;
+      g.save();
+      g.globalAlpha = clamp(skipPulse, 0, 1);
+      drawText(g, 'E  SKIP THE VOYAGE', W - 12, 12, {
+        align: 'right', color: '#9c93a6', scale: 1, spacing: 1,
+      });
+      g.restore();
+    }
 
     const lines = [
       [0.8, 'THE SHIP TAKES THE LONG WAY OUT.'],
@@ -2789,6 +2907,9 @@ export class Game {
     this.ending = {
       name: 'THE LAST LIGHT',
       continued: true,
+      retry: true,
+      retryFinale: true,
+      prompt: 'PRESS E TO TRY THE LAST FIGHT AGAIN',
       lines: [
         'HER LEGS GIVE OUT IN THE MIDDLE OF THE ROAD.',
         'THE GHOST SHIELDS CLOSE OVER HER LIKE COLD WATER, AND THE STREET GOES QUIET.',
@@ -3491,6 +3612,19 @@ export class Game {
       });
     }
 
+    for (const crab of c.crabs) {
+      if (!crab.alive) continue;
+      const sx = crab.x - this.cam.x;
+      if (sx < -80 || sx > W + 80) continue;
+      drawCrab(g, sx, groundAt(L, crab.x), this.time, {
+        facing: crab.dir,
+        flash: crab.flash,
+        moving: crab.moving,
+        run: crab.x * 0.011,
+        pinch: crab.pinchT > 0 ? 1 : 0,
+      });
+    }
+
     for (const spider of c.spiders) {
       if (!spider.alive) continue;
       const sx = spider.x - this.cam.x;
@@ -3667,9 +3801,11 @@ export class Game {
     }
     const hasFoes = c.dogs.some((dog) => dog.alive)
       || c.spiders.some((spider) => spider.alive)
+      || c.crabs.some((crab) => crab.alive)
       || (boss && boss.alive);
     const spiderOnly = c.spiders.some((spider) => spider.alive)
       && !c.dogs.some((dog) => dog.alive)
+      && !c.crabs.some((crab) => crab.alive)
       && !(boss && boss.alive);
     const hint = bossAlive
       ? 'W JUMP   SHIFT DASH   X SHARDS   C KNIGHTS\' BEAM'

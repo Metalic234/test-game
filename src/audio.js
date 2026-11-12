@@ -526,6 +526,9 @@ export class AudioEngine {
       case 'dogBite':
         this.dogBite(t);
         break;
+      case 'crabPinch':
+        this.crabPinch(t);
+        break;
       case 'spiderHiss':
         this.spiderHiss(t);
         break;
@@ -773,6 +776,11 @@ export class AudioEngine {
   dogBite(t) {
     this.sweep(t, 220, 90, 0.12, 0.03, 'sawtooth');
     this.noiseHit(t, 900, 0.09, 0.016, 1.8);
+  }
+
+  crabPinch(t) {
+    this.noiseHit(t, 2400, 0.045, 0.015, 2.5);
+    this.sweep(t, 420, 150, 0.07, 0.02, 'square');
   }
 
   spiderHiss(t) {

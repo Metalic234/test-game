@@ -613,6 +613,156 @@ export function drawDog(g, cx, baseY, t, opts = {}) {
   g.restore();
 }
 
+// A green-cliff crab: low shell, too many legs, and two pincers that never
+// quite stop opening and closing.
+export function drawCrab(g, cx, baseY, t, opts = {}) {
+  const scale = opts.scale || 1;
+  const facing = opts.facing || -1;
+  const flash = opts.flash || 0;
+  const moving = !!opts.moving;
+  const run = opts.run || 0;
+  const pinch = opts.pinch || 0;
+  const alpha = opts.alpha ?? 1;
+  const open = pinch > 0 ? 4 : 1.2 + Math.sin(t * 4.5 + run) * 0.7;
+
+  g.save();
+  g.globalAlpha = alpha;
+  g.translate(Math.round(cx), Math.round(baseY));
+  g.scale(facing * scale, scale);
+
+  // A dark underside keeps the crab readable against the bright cliff grass.
+  g.fillStyle = 'rgba(9,8,6,0.45)';
+  g.beginPath();
+  g.ellipse(0, 0, 21, 3.5, 0, 0, TAU);
+  g.fill();
+
+  // Four jointed legs on each side, scuttling in alternating pairs.
+  g.lineCap = 'round';
+  for (const side of [-1, 1]) {
+    for (let i = 0; i < 4; i++) {
+      const rootX = -9 + i * 5;
+      const phase = t * (moving ? 12 : 5.5) + i * 1.8 + (side > 0 ? 2.4 : 0) + run;
+      const swing = Math.sin(phase) * (moving ? 2.4 : 0.6);
+      const kneeX = rootX + side * (8 + i * 1.2) + swing;
+      const kneeY = -8 - i * 1.1 + Math.abs(swing) * 0.4;
+      const footX = rootX + side * (16 + i * 1.7) + swing * 1.5;
+      const footY = -1 + Math.abs(swing) * 0.25;
+      g.strokeStyle = i % 2 ? '#4b2a22' : '#321c18';
+      g.lineWidth = 2;
+      g.beginPath();
+      g.moveTo(rootX, -10);
+      g.lineTo(kneeX, kneeY);
+      g.lineTo(footX, footY);
+      g.stroke();
+      g.fillStyle = '#1b1110';
+      g.fillRect(Math.round(footX) - 1, Math.round(footY) - 1, 3, 2);
+    }
+  }
+
+  // Shell, underbelly and the pale lip along the front.
+  g.fillStyle = '#2a1714';
+  g.beginPath();
+  g.ellipse(0, -12, 18, 10, 0, 0, TAU);
+  g.fill();
+  g.fillStyle = '#b9553d';
+  g.beginPath();
+  g.ellipse(0, -13, 14, 8, 0, 0, TAU);
+  g.fill();
+  g.fillStyle = '#d97754';
+  g.beginPath();
+  g.ellipse(-2, -16, 10, 4.5, 0, 0, TAU);
+  g.fill();
+  g.fillStyle = '#eab07d';
+  g.beginPath();
+  g.ellipse(0, -8, 11, 3, 0, 0, TAU);
+  g.fill();
+
+  // Shell plates and barnacle freckles.
+  g.strokeStyle = 'rgba(79,39,30,0.75)';
+  g.lineWidth = 1;
+  for (let i = 0; i < 3; i++) {
+    g.beginPath();
+    g.arc(-3 + i * 6, -17, 4 + i, 0.1, Math.PI - 0.1);
+    g.stroke();
+  }
+  g.fillStyle = '#f1c08d';
+  g.fillRect(-8, -20, 2, 1);
+  g.fillRect(2, -19, 1, 1);
+  g.fillRect(9, -16, 2, 1);
+  g.fillStyle = 'rgba(255,240,210,0.5)';
+  g.fillRect(-10, -17, 4, 1);
+
+  // Eye stalks: two points of wet amber looking over the shell.
+  g.strokeStyle = '#3a211c';
+  g.lineWidth = 1.5;
+  g.beginPath();
+  g.moveTo(3, -20);
+  g.lineTo(5, -25);
+  g.moveTo(9, -19);
+  g.lineTo(11, -24);
+  g.stroke();
+  g.save();
+  g.globalCompositeOperation = 'lighter';
+  glow(g, 6, -25, 8, '#ffb070', 0.4);
+  glow(g, 11, -24, 7, '#ffb070', 0.32);
+  g.restore();
+  g.fillStyle = '#f6e7be';
+  g.fillRect(4, -26, 2, 2);
+  g.fillRect(10, -25, 2, 2);
+  g.fillStyle = '#1b1110';
+  g.fillRect(5, -26, 1, 1);
+  g.fillRect(11, -25, 1, 1);
+
+  // The pincers. They sit forward of the shell; one high, one low.
+  for (const [ay, tilt] of [[-18, -2], [-11, 2]]) {
+    g.strokeStyle = '#3a211c';
+    g.lineWidth = 3;
+    g.beginPath();
+    g.moveTo(10, ay + 3);
+    g.lineTo(17, ay - 1);
+    g.lineTo(23, ay + tilt);
+    g.stroke();
+    g.fillStyle = '#a84a36';
+    g.beginPath();
+    g.ellipse(26, ay + tilt - 1, 7, 5, 0.25, 0, TAU);
+    g.fill();
+    g.fillStyle = '#d97754';
+    g.beginPath();
+    g.ellipse(25, ay + tilt - 3, 4, 2, 0.2, 0, TAU);
+    g.fill();
+    g.fillStyle = '#241411';
+    g.beginPath();
+    g.moveTo(31, ay + tilt - 2);
+    g.lineTo(38, ay + tilt - 6 - open);
+    g.lineTo(33, ay + tilt + 1);
+    g.closePath();
+    g.fill();
+    g.beginPath();
+    g.moveTo(31, ay + tilt + 1);
+    g.lineTo(38, ay + tilt + 5 + open);
+    g.lineTo(32, ay + tilt + 4);
+    g.closePath();
+    g.fill();
+    g.fillStyle = '#f1c08d';
+    g.fillRect(29, ay + tilt - 1, 3, 1);
+  }
+
+  // A few bubbles and grains kicked up by the legs.
+  g.fillStyle = 'rgba(223,242,224,0.35)';
+  for (let i = 0; i < 3; i++) {
+    const by = -2 - ((t * 7 + i * 4 + run) % 15);
+    g.fillRect(-18 + i * 8, Math.round(by), 1 + (i % 2), 1);
+  }
+
+  if (flash > 0) {
+    g.globalCompositeOperation = 'lighter';
+    g.globalAlpha = flash * 0.48;
+    g.fillStyle = '#ffffff';
+    g.fillRect(-23, -29, 62, 29);
+  }
+  g.restore();
+}
+
 // The desert's last keeper: broad, low, and older than the road.
 export function drawScorpion(g, cx, baseY, t, opts = {}) {
   const scale = opts.scale || 1;
