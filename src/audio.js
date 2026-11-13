@@ -526,6 +526,18 @@ export class AudioEngine {
       case 'dogBite':
         this.dogBite(t);
         break;
+      case 'crabPinch':
+        this.crabPinch(t);
+        break;
+      case 'spiderHiss':
+        this.spiderHiss(t);
+        break;
+      case 'spiderBite':
+        this.spiderBite(t);
+        break;
+      case 'guardianBeam':
+        this.guardianBeam(t);
+        break;
       case 'scorpionClaw':
         this.scorpionClaw(t);
         break;
@@ -764,6 +776,27 @@ export class AudioEngine {
   dogBite(t) {
     this.sweep(t, 220, 90, 0.12, 0.03, 'sawtooth');
     this.noiseHit(t, 900, 0.09, 0.016, 1.8);
+  }
+
+  crabPinch(t) {
+    this.noiseHit(t, 2400, 0.045, 0.015, 2.5);
+    this.sweep(t, 420, 150, 0.07, 0.02, 'square');
+  }
+
+  spiderHiss(t) {
+    this.noiseHit(t, 760, 0.28, 0.011, 0.8);
+    this.sweep(t, 280, 520, 0.2, 0.012, 'triangle');
+  }
+
+  spiderBite(t) {
+    this.noiseHit(t, 1500, 0.07, 0.016, 2.2);
+    this.sweep(t, 340, 120, 0.12, 0.022, 'square');
+  }
+
+  guardianBeam(t) {
+    this.sweep(t, 180, 820, 0.24, 0.038, 'sawtooth');
+    this.sweep(t, 960, 260, 0.2, 0.022, 'triangle');
+    this.noiseHit(t, 2800, 0.15, 0.018, 1.8);
   }
 
   scorpionClaw(t) {

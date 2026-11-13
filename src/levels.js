@@ -32,6 +32,13 @@ const CONFIGS = [
     spawnX: 42,
     exitX: 3200,
     amp: 3.6,
+    hostile: true,
+    spiders: [
+      { x: 430, home: 430 },
+      { x: 1280, home: 1280 },
+      { x: 2060, home: 2060 },
+      { x: 2810, home: 2810 },
+    ],
     points: [
       [0, 238], [260, 230], [520, 238], [780, 220], [1040, 231], [1280, 209],
       [1520, 227], [1780, 236], [2020, 216], [2280, 231], [2520, 208],
@@ -62,6 +69,13 @@ const CONFIGS = [
     spawnX: 42,
     exitX: 2900,
     amp: 2.1,
+    hostile: true,
+    dogs: [
+      { x: 560, home: 560 },
+      { x: 720, home: 720 },
+      { x: 1820, home: 1820 },
+      { x: 2630, home: 2630 },
+    ],
     points: [
       [0, 242], [420, 230], [820, 244], [1220, 224], [1620, 240],
       [2020, 226], [2420, 242], [2800, 229], [3000, 236],
@@ -87,6 +101,18 @@ const CONFIGS = [
     spawnX: 42,
     exitX: 2700,
     amp: 4.2,
+    hostile: true,
+    boss: {
+      kind: 'giant',
+      x: 2520,
+      triggerX: 2180,
+      arenaMin: 2100,
+      arenaMax: 2670,
+      name: 'THE SNOW GIANT',
+      subtitle: 'THE PASS ITSELF',
+      hp: 240,
+      color: '#b9dff2',
+    },
     points: [
       [0, 244], [300, 237], [600, 226], [900, 210], [1180, 193],
       [1480, 178], [1780, 158], [2080, 141], [2380, 126], [2640, 114], [2800, 109],
@@ -197,7 +223,28 @@ const CONFIGS = [
     spawnX: 42,
     exitX: 3520,
     cliffs: true,
+    hostile: true,
     amp: 0.6,
+    // Crabs come in greater numbers than the dogs or spiders: mostly lone
+    // sentries along the cliff tops, with a few pairs holding the narrow ways.
+    crabs: [
+      { x: 190, home: 190 },
+      { x: 420, home: 420 },
+      { x: 458, home: 458 },
+      { x: 700, home: 700 },
+      { x: 1120, home: 1120 },
+      { x: 1330, home: 1330 },
+      { x: 1368, home: 1368 },
+      { x: 1590, home: 1590 },
+      { x: 1780, home: 1780 },
+      { x: 2240, home: 2240 },
+      { x: 2460, home: 2460 },
+      { x: 2640, home: 2640 },
+      { x: 2678, home: 2678 },
+      { x: 2830, home: 2830 },
+      { x: 3260, home: 3260 },
+      { x: 3440, home: 3440 },
+    ],
     points: [
       [0, 214], [820, 212], [1020, 204], [1900, 204],
       [2140, 216], [2900, 216], [3140, 208], [3600, 206],
@@ -213,6 +260,7 @@ const CONFIGS = [
       { x: 2880, w: 280, whale: false },
     ],
     whaleBridge: 1,
+    dolphinBridges: [0, 2],
     memories: [],
   },
 ];
@@ -2351,11 +2399,14 @@ function buildFromConfig(cfg, index) {
     ship: !!cfg.ship,
     hostile: !!cfg.hostile,
     dogs: (cfg.dogs || []).map((d) => ({ ...d })),
+    spiders: (cfg.spiders || []).map((d) => ({ ...d })),
+    crabs: (cfg.crabs || []).map((d) => ({ ...d })),
     boss: cfg.boss ? { ...cfg.boss } : null,
     cliffs: !!cfg.cliffs,
     gaps: (cfg.gaps || []).map((gap) => ({ ...gap })),
     bridges: (cfg.bridges || []).map((bridge) => ({ ...bridge })),
     whaleBridge: cfg.whaleBridge ?? null,
+    dolphinBridges: (cfg.dolphinBridges || []).slice(),
   };
   for (const m of level.memories) m.y = groundAt(level, m.x) - 25;
   if (level.power) level.power.y = groundAt(level, level.power.x);
